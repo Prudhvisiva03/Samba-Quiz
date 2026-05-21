@@ -3,7 +3,7 @@ import './App.css'
 import { extractTextFromFile } from './lib/fileParsers'
 import type { Difficulty, QuizPayload, QuizQuestion } from './types'
 
-type Step = 'upload' | 'configure' | 'quiz' | 'results'
+type Step = 'upload' | 'configure' | 'quiz' | 'celebrate' | 'results'
 type ExamType = 'mcq' | 'scenario' | 'mixed'
 type MascotMood = 'idle' | 'ready' | 'thinking' | 'correct' | 'wrong' | 'celebrate' | 'sad'
 type ChatMessage = { role: 'user' | 'ai'; text: string }
@@ -621,6 +621,78 @@ function Confetti() {
   )
 }
 
+/* ── SCORE RING (SVG animated) ───────────────────────────────────────────── */
+function ScoreRing({ pct }: { pct: number }) {
+  const r = 52
+  const circ = 2 * Math.PI * r
+  const [offset, setOffset] = useState(circ)
+
+  useEffect(() => {
+    const id = setTimeout(() => setOffset(circ * (1 - pct / 100)), 120)
+    return () => clearTimeout(id)
+  }, [pct, circ])
+
+  const ringColor = pct >= 80 ? '#16a34a' : pct >= 60 ? '#5b5ef4' : '#f59e0b'
+
+  return (
+    <div className="score-ring-wrap">
+      <svg viewBox="0 0 120 120" className="score-ring-svg">
+        <circle cx="60" cy="60" r={r} fill="none" stroke="var(--border)" strokeWidth="11" />
+        <circle
+          cx="60" cy="60" r={r}
+          fill="none"
+          stroke={ringColor}
+          strokeWidth="11"
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={offset}
+          transform="rotate(-90 60 60)"
+          className="score-ring-arc"
+        />
+      </svg>
+      <div className="score-ring-label">
+        <strong style={{ color: ringColor }}>{pct}%</strong>
+        <span>SCORE</span>
+      </div>
+    </div>
+  )
+}
+
+/* ── CELEBRATION SCREEN ──────────────────────────────────────────────────── */
+function CelebrateScreen({ pct, score, userName, onDone }: {
+  pct: number
+  score: { correct: number; total: number }
+  userName: string
+  onDone: () => void
+}) {
+  useEffect(() => {
+    const id = setTimeout(onDone, 3000)
+    return () => clearTimeout(id)
+  }, [onDone])
+
+  const emoji   = pct >= 80 ? '🏆' : pct >= 60 ? '🎉' : '💪'
+  const message = pct >= 80 ? 'Outstanding!' : pct >= 60 ? 'Great work!' : 'Keep pushing!'
+
+  return (
+    <>
+      <Confetti />
+      <div className="screen celebrate-screen">
+        <div className="celebrate-wrap">
+          <div className="celebrate-emoji">{emoji}</div>
+          <div className="celebrate-pct" style={{ color: pct >= 80 ? '#16a34a' : pct >= 60 ? '#5b5ef4' : '#f59e0b' }}>
+            {pct}%
+          </div>
+          <p className="celebrate-msg">{userName ? `${message} ${userName}!` : message}</p>
+          <p className="celebrate-sub">{score.correct} of {score.total} correct</p>
+          <button className="primary-btn celebrate-skip" onClick={onDone}>
+            See full results →
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
 export default function App() {
   const [step, setStep] = useState<Step>('upload')
   const [form, setForm] = useState<QuizForm>(initialForm)
@@ -1169,7 +1241,7 @@ export default function App() {
                 Next →
               </button>
             ) : (
-              <button className="nav-btn nav-primary" disabled={score.answered < quiz.questions.length} onClick={() => setStep('results')}>
+              <button className="nav-btn nav-primary" disabled={score.answered < quiz.questions.length} onClick={() => setStep('celebrate')}>
                 See results ✓
               </button>
             )}
@@ -1178,6 +1250,10 @@ export default function App() {
         <FloatingCompanion question={question} eatTick={catEat} />
       </>
     )
+  }
+
+  if (step === 'celebrate' && quiz) {
+    return <CelebrateScreen pct={pct} score={score} userName={userName} onDone={() => setStep('results')} />
   }
 
   if (step === 'results' && quiz) {
@@ -1195,10 +1271,7 @@ export default function App() {
           <section className="surface-card results-hero">
             <div className="results-hero-top">
               <Mascot mood={mascotMood} />
-              <div className="results-ring" style={{ '--ring-pct': `${pct}` } as React.CSSProperties}>
-                <strong>{pct}%</strong>
-                <span>Score</span>
-              </div>
+              <ScoreRing pct={pct} />
             </div>
 
             <div className="results-copy">

@@ -46,7 +46,7 @@ const journeySteps = ['Upload', 'Tune', 'Practice', 'Review']
 const heroHighlights = [
   {
     title: 'Upload once',
-    text: 'Turn PDFs, PPTX decks, and copied notes into one clean practice stream.',
+    text: 'Turn PDFs, PPTX decks, images, and copied notes into one clean practice stream.',
   },
   {
     title: 'Practice actively',
@@ -62,22 +62,10 @@ const heroHighlights = [
   },
 ]
 
-const audienceBands = [
-  { title: 'Class 5 to 10', text: 'Simple practice, colorful flow, and easy explanations.' },
-  { title: 'Intermediate', text: 'Quick recall, chapter practice, and exam-friendly revision.' },
-  { title: 'Degree & BTech', text: 'Source-based MCQs, tighter distractors, and concept review.' },
-]
-
 const landingJourney = [
-  { title: '1. Upload Notes', text: 'Add a PDF, PPTX, or text in one tap and let the app clean it up.' },
+  { title: '1. Add Material', text: 'Add a PDF, PPTX, image, notes, or even just a topic name in one tap.' },
   { title: '2. Build a Quiz', text: 'Get source-grounded MCQs with better options and short explanations.' },
   { title: '3. Learn Fast', text: 'Check answers, review mistakes, and ask the helper for simple explanations.' },
-]
-
-const landingTrust = [
-  { title: 'Built for exams', text: 'Works for school tests, university internals, government prep, and practice sessions.' },
-  { title: 'Friendly by design', text: 'Playful visuals, animated helpers, and low-stress practice make studying easier.' },
-  { title: 'Safer revision', text: 'Answers now show proof from your notes so you can cross-check important facts.' },
 ]
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
@@ -628,6 +616,7 @@ export default function App() {
   const [customSubject, setCustomSubject] = useState('')
   const [studyText, setStudyText] = useState('')
   const [fileName, setFileName] = useState('')
+  const [sourceLabel, setSourceLabel] = useState('Typed notes')
   const [mode, setMode] = useState('rapid')
   const [isParsing, setParsing] = useState(false)
   const [isBuilding, setBuilding] = useState(false)
@@ -647,6 +636,9 @@ export default function App() {
     )
     return { words, topics }
   }, [studyText])
+
+  const topicOnly = !fileName && stats.words > 0 && stats.words <= 8
+  const canContinue = studyText.trim().length > 0 && !isParsing
 
   const score = useMemo(() => {
     if (!quiz) {
@@ -696,6 +688,8 @@ export default function App() {
       if (!text.trim()) throw new Error('This file does not contain enough readable text.')
       setStudyText(text)
       setFileName(file.name)
+      const extension = file.name.split('.').pop()?.toLowerCase()
+      setSourceLabel(extension && ['png', 'jpg', 'jpeg', 'webp'].includes(extension) ? 'Image upload' : 'Uploaded file')
     } catch (value) {
       setError(value instanceof Error ? value.message : 'Could not read this file.')
     } finally {
@@ -733,7 +727,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sourceText: studyText,
-          metadata: { fileName, mode },
+          metadata: { fileName, mode, inputMode: topicOnly ? 'topic' : fileName ? 'file' : 'notes' },
           options: { ...form, tone: 'clear and direct' },
         }),
       })
@@ -757,6 +751,7 @@ export default function App() {
   function reset() {
     setStudyText('')
     setFileName('')
+    setSourceLabel('Typed notes')
     setQuiz(null)
     setAnswers({})
     setError('')
@@ -775,7 +770,7 @@ export default function App() {
         <div className="screen-glow screen-glow--two" />
 
         <header className="screen-hdr">
-          <div className="brand">⚡ Quiz Generator</div>
+          <div className="brand">Samba Quiz</div>
         </header>
 
         <main className="screen-body screen-body--wide">
@@ -795,27 +790,18 @@ export default function App() {
                 <span>Score</span>
               </div>
               <h1 className="upload-title">
-                Turn notes into a
+                Study notes in,
                 <br />
-                <span>beautiful quiz flow</span>
+                <span>quiz out</span>
               </h1>
               <p className="upload-sub">
-                Upload a PDF, PPTX, or plain text and get a playful, source-grounded quiz experience built for everyone from Class 5 students to BTech learners.
+                Upload notes, drop an image, or type a topic and get simple MCQ practice with easy explanations.
               </p>
             </div>
 
             <div className="hero-mini-grid">
               {heroHighlights.map((item) => (
                 <article key={item.title} className="hero-mini-card">
-                  <strong>{item.title}</strong>
-                  <span>{item.text}</span>
-                </article>
-              ))}
-            </div>
-
-            <div className="audience-strip">
-              {audienceBands.map((item) => (
-                <article key={item.title} className="audience-card">
                   <strong>{item.title}</strong>
                   <span>{item.text}</span>
                 </article>
@@ -844,28 +830,39 @@ export default function App() {
               onDragLeave={() => setDragging(false)}
               onDrop={handleDrop}
             >
-              <input id="up-input" type="file" accept=".pdf,.pptx,.txt" onChange={handleFile} disabled={isParsing} />
+              <input id="up-input" type="file" accept=".pdf,.pptx,.txt,.png,.jpg,.jpeg,.webp" onChange={handleFile} disabled={isParsing} />
               <div className="dz-icon">{isParsing ? '⏳' : fileName ? '✅' : dragging ? '📂' : '📄'}</div>
               <strong className="dz-title">
                 {isParsing ? 'Reading file...' : fileName ? fileName : dragging ? 'Drop your file here' : 'Click or drag your file here'}
               </strong>
-              <span className="dz-sub">PDF · PPTX · TXT supported</span>
+              <span className="dz-sub">PDF, PPTX, TXT, PNG, JPG, and WEBP supported</span>
               {fileName && <span className="dz-change">Choose another file</span>}
             </label>
 
-            <div className="or-divider"><span>or paste your notes</span></div>
+            <div className="or-divider"><span>or paste notes or a topic</span></div>
 
             <textarea
               className="paste-area"
               value={studyText}
-              onChange={(event) => setStudyText(event.target.value)}
-              placeholder="Paste notes, chapter text, or revision points here."
+              onChange={(event) => {
+                setStudyText(event.target.value)
+                if (!fileName) {
+                  setSourceLabel('Typed notes')
+                }
+              }}
+              placeholder="Paste notes, paste text from an image, or type a topic like CompTIA Network+."
             />
 
             {stats.words > 0 && (
               <div className="word-stats">
                 <span><strong>{stats.words}</strong> words loaded</span>
-                <span><strong>{stats.topics.length}</strong> key topics found</span>
+                <span><strong>{topicOnly ? 1 : stats.topics.length}</strong> {topicOnly ? 'topic prompt ready' : 'key topics found'}</span>
+              </div>
+            )}
+
+            {topicOnly && (
+              <div className="alert alert-info">
+                Short topic mode detected. Samba Quiz will build questions from your typed topic even without a file.
               </div>
             )}
 
@@ -881,7 +878,7 @@ export default function App() {
 
             <button
               className="primary-btn btn-lg btn-full"
-              disabled={!studyText.trim() || isParsing}
+              disabled={!canContinue}
               onClick={() => {
                 setError('')
                 setStep('configure')
@@ -894,9 +891,9 @@ export default function App() {
           <section className="surface-card landing-storyboard">
             <div className="landing-storyboard-top">
               <p className="section-label">How it works</p>
-              <h2 className="landing-heading">Study less passively. Practice more actively.</h2>
+              <h2 className="landing-heading">Three easy steps.</h2>
               <p className="configure-sub">
-                The flow is simple enough for younger students, but strong enough for serious end-term and semester revision.
+                Built to feel simple for school students and still useful for college revision.
               </p>
             </div>
 
@@ -909,27 +906,8 @@ export default function App() {
               ))}
             </div>
           </section>
-
-          <section className="surface-card landing-trust-panel">
-            <div className="landing-storyboard-top">
-              <p className="section-label">Why students like it</p>
-              <h2 className="landing-heading">Animations, guidance, and safer answers in one place.</h2>
-            </div>
-
-            <div className="landing-trust-grid">
-              {landingTrust.map((item) => (
-                <article key={item.title} className="landing-trust-card">
-                  <strong>{item.title}</strong>
-                  <p>{item.text}</p>
-                </article>
-              ))}
-            </div>
-          </section>
         </main>
 
-        <p className="screen-footnote">
-          Add <code>OPENAI_API_KEY</code> to <code>.env</code> for live AI explanations. Local fallback mode still works.
-        </p>
       </div>
       <FloatingCompanion />
       </>
@@ -958,7 +936,7 @@ export default function App() {
                 </p>
               </div>
               <div className="material-badge">
-                📄 {fileName || 'Pasted text'}
+                📘 {fileName || (topicOnly ? 'Typed topic' : sourceLabel)}
                 <span className="badge-count">{stats.words} words</span>
               </div>
             </div>
@@ -1195,7 +1173,7 @@ export default function App() {
         {pct >= 70 && <Confetti />}
 
         <header className="screen-hdr">
-          <div className="brand">⚡ Quiz Generator</div>
+          <div className="brand">Samba Quiz</div>
           {userName && <span className="hdr-name">{userName}</span>}
         </header>
 

@@ -44,6 +44,20 @@ function clampText(text, maxLength = 10000) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
 }
 
+function buildTopicSource(sourceText, options = {}, metadata = {}) {
+  const topic = cleanText(sourceText || options.examName || metadata.fileName || 'General revision topic')
+  return [
+    `Topic: ${topic}.`,
+    options.examName ? `Exam focus: ${options.examName}.` : '',
+    options.learnerGoal ? `Learner goal: ${options.learnerGoal}.` : '',
+    options.difficultyMix ? `Difficulty target: ${options.difficultyMix}.` : '',
+    'Create exam-ready multiple-choice questions using reliable standard knowledge for this topic.',
+    'Keep answers practical, correct, and easy to revise.',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
 function extractJson(rawText) {
   // Strip <think>...</think> reasoning blocks produced by kimi-k2, deepseek-r1, etc.
   let cleaned = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
@@ -208,6 +222,41 @@ function buildFallbackQuiz(sourceText, options, metadata) {
   }
 }
 
+function buildTopicFallbackQuiz(sourceText, options, metadata) {
+  const topic = cleanText(sourceText || options.examName || 'This topic')
+  const count = Math.min(Math.max(Number(options.questionCount) || 8, 5), 15)
+
+  return {
+    title: `${options.examName || topic} Quiz Builder`,
+    flashSummary: [
+      `Topic focus: ${topic}`,
+      `Exam style: ${options.examType ?? 'mcq'}`,
+      `Difficulty: ${options.difficultyMix ?? 'medium'}`,
+    ],
+    questions: Array.from({ length: count }, (_, index) => ({
+      id: `topic-${index + 1}`,
+      question:
+        index % 3 === 0
+          ? `Which statement best describes ${topic}?`
+          : index % 3 === 1
+            ? `Which point is most important when revising ${topic}?`
+            : `Which option is most closely related to ${topic}?`,
+      options: [
+        `A core idea of ${topic}`,
+        'An unrelated point from another topic',
+        'A vague distractor with weak relevance',
+        'A random option without exam value',
+      ],
+      answerIndex: 0,
+      explanation: `This quiz was built from a short topic prompt. Upload notes, paste text, or add an image for more exact source-based questions on ${topic}.`,
+      difficulty: options.difficultyMix ?? 'medium',
+      sourceHint: metadata.fileName || 'Typed topic',
+      sourceExcerpt: `Topic prompt: ${topic}`,
+    })),
+    sourceType: openai ? 'OpenAI topic generator backup' : 'Local topic generator',
+  }
+}
+
 function normalizeQuiz(payload, fallbackQuiz) {
   if (!payload || typeof payload !== 'object') {
     return fallbackQuiz
@@ -267,6 +316,7 @@ async function generateWithOpenAI(sourceText, options, metadata, fallbackQuiz) {
     scenario: 'scenario-based questions (give a real-world situation, then ask)',
     mixed: 'mix of standard MCQs and scenario-based questions (roughly 50/50)',
   }[options.examType] ?? 'standard multiple-choice questions'
+  const topicOnly = cleanText(String(metadata.inputMode ?? '')) === 'topic'
 
   const prompt = `You are an expert exam coach. Build an exam-prep quiz from the material below.
 Return ONLY valid JSON — no extra text, no markdown fences.
@@ -297,7 +347,7 @@ Rules:
 - The correct answer must be directly supported by "sourceExcerpt".
 - If support is weak, skip that fact and choose a better-supported one.
 - Do NOT reference slide numbers or page numbers in questions.
-- Only use facts from the material below.
+- ${topicOnly ? 'Use standard, reliable knowledge for the typed topic below.' : 'Only use facts from the material below.'}
 
 Material:
 ${clampText(sourceText)}`
@@ -357,20 +407,25 @@ app.post('/api/generate-quiz', async (request, response) => {
   const sourceText = cleanText(String(request.body?.sourceText ?? ''))
   const options = request.body?.options ?? {}
   const metadata = request.body?.metadata ?? {}
+  const topicOnly = cleanText(String(metadata.inputMode ?? '')) === 'topic'
+  const hasEnoughMaterial = sourceText.length >= 120
 
-  if (sourceText.length < 120) {
+  // Strip PPTX "Slide N:" artifacts before building fallback so questions don't ask about "Slide"
+  const cleanedText = stripPptxArtifacts(sourceText)
+  const fallbackQuiz = hasEnoughMaterial
+    ? buildFallbackQuiz(cleanedText, options, metadata)
+    : buildTopicFallbackQuiz(sourceText, options, metadata)
+
+  if (!hasEnoughMaterial && !topicOnly) {
     response.status(400).json({
-      message: 'Please provide a bit more study material so the quiz can be meaningful.',
+      message: 'Please paste more text, upload a file or image, or type a clear exam topic to continue.',
     })
     return
   }
 
-  // Strip PPTX "Slide N:" artifacts before building fallback so questions don't ask about "Slide"
-  const cleanedText = stripPptxArtifacts(sourceText)
-  const fallbackQuiz = buildFallbackQuiz(cleanedText, options, metadata)
-
   try {
-    const quiz = await generateWithOpenAI(sourceText, options, metadata, fallbackQuiz)
+    const generationText = hasEnoughMaterial ? sourceText : buildTopicSource(sourceText, options, metadata)
+    const quiz = await generateWithOpenAI(generationText, options, metadata, fallbackQuiz)
     response.json(quiz)
   } catch (err) {
     console.error('[AI error]', err?.message ?? err)

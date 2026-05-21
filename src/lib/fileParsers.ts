@@ -12,6 +12,8 @@ const cleanupText = (value: string) =>
     .replaceAll(String.fromCharCode(0), ' ')
     .trim()
 
+const supportedImageTypes = new Set(['png', 'jpg', 'jpeg', 'webp'])
+
 export async function extractPdfText(file: File) {
   const pdfjs = await import('pdfjs-dist')
   const pdfWorker = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
@@ -63,6 +65,20 @@ export async function extractPptxText(file: File) {
   return slideTexts.filter(Boolean).join('\n\n')
 }
 
+export async function extractImageText(file: File) {
+  const { createWorker } = await import('tesseract.js')
+  const worker = await createWorker('eng')
+
+  try {
+    const {
+      data: { text },
+    } = await worker.recognize(file)
+    return cleanupText(text)
+  } finally {
+    await worker.terminate()
+  }
+}
+
 export async function extractTextFromFile(file: File) {
   const extension = file.name.split('.').pop()?.toLowerCase()
 
@@ -78,5 +94,9 @@ export async function extractTextFromFile(file: File) {
     return cleanupText(await file.text())
   }
 
-  throw new Error('Please upload a PDF, PPTX, or TXT file.')
+  if (extension && supportedImageTypes.has(extension)) {
+    return extractImageText(file)
+  }
+
+  throw new Error('Please upload a PDF, PPTX, TXT, PNG, JPG, JPEG, or WEBP file.')
 }

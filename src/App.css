@@ -81,6 +81,21 @@
 
 .brand {
   font-size: 1rem;
+  position: relative;
+  padding-left: 0.95rem;
+}
+
+.brand::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 0.46rem;
+  height: 0.46rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #f59e0b, #5b5ef4);
+  transform: translateY(-50%);
+  box-shadow: 0 0 0 6px rgba(91, 94, 244, 0.08);
 }
 
 .hdr-title {
@@ -119,7 +134,7 @@
 }
 
 .screen-body--wide {
-  max-width: 900px;
+  max-width: 840px;
 }
 
 .screen-footnote {
@@ -139,11 +154,12 @@
 }
 
 .hero-panel {
-  padding: 1.2rem;
+  padding: 1.35rem;
   background:
     radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 18%, transparent), transparent 34%),
     linear-gradient(180deg, color-mix(in srgb, var(--surface) 94%, transparent), color-mix(in srgb, var(--surface-2) 84%, transparent));
   animation: fadeSlideUp 380ms ease both;
+  overflow: hidden;
 }
 
 .hero-kicker-row {
@@ -228,7 +244,7 @@
 
 .hero-mini-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.8rem;
   margin-top: 1.35rem;
 }
@@ -245,12 +261,20 @@
 
 .hero-mini-card {
   animation: fadeSlideUp 420ms ease both;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
 }
 
 .hero-mini-card:nth-child(2) { animation-delay: 70ms; }
 .hero-mini-card:nth-child(3) { animation-delay: 140ms; }
 
 .hero-mini-card:nth-child(4) { animation-delay: 210ms; }
+
+.hero-mini-card:hover,
+.landing-journey-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 16px 28px rgba(15, 23, 42, 0.08);
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--border));
+}
 
 .hero-mini-card strong,
 .config-preview-card strong,
@@ -277,19 +301,11 @@
   animation: fadeSlideUp 420ms ease both;
 }
 
-.audience-strip,
 .landing-journey-grid,
 .landing-trust-grid {
   display: grid;
   gap: 0.8rem;
 }
-
-.audience-strip {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 1rem;
-}
-
-.audience-card,
 .landing-journey-card,
 .landing-trust-card {
   padding: 1rem;
@@ -300,14 +316,12 @@
   gap: 0.35rem;
 }
 
-.audience-card strong,
 .landing-journey-card strong,
 .landing-trust-card strong,
 .landing-heading {
   color: var(--ink);
 }
 
-.audience-card span,
 .landing-journey-card p,
 .landing-trust-card p {
   margin: 0;
@@ -318,7 +332,7 @@
 
 .landing-storyboard,
 .landing-trust-panel {
-  padding: 1.25rem;
+  padding: 1.1rem 1.25rem;
   border-radius: 28px;
   display: grid;
   gap: 1rem;
@@ -328,12 +342,6 @@
 .landing-storyboard {
   background:
     radial-gradient(circle at top left, color-mix(in srgb, #f59e0b 14%, transparent), transparent 28%),
-    color-mix(in srgb, var(--surface) 92%, transparent);
-}
-
-.landing-trust-panel {
-  background:
-    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 16%, transparent), transparent 28%),
     color-mix(in srgb, var(--surface) 92%, transparent);
 }
 
@@ -356,6 +364,7 @@
 
 .landing-journey-card {
   animation: fadeSlideUp 380ms ease both;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
 }
 
 .landing-journey-card:nth-child(2) { animation-delay: 80ms; }
@@ -560,6 +569,12 @@ textarea {
   background: var(--red-bg);
   border: 1px solid color-mix(in srgb, var(--red) 24%, transparent);
   color: var(--red);
+}
+
+.alert-info {
+  background: color-mix(in srgb, var(--accent-bg) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent-dk);
 }
 
 .primary-btn,
@@ -1564,6 +1579,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  flex-wrap: wrap;
 }
 
 .results-copy {
@@ -1582,6 +1598,9 @@ textarea {
 .results-ring {
   width: 148px;
   height: 148px;
+  min-width: 148px;
+  flex-shrink: 0;
+  margin-inline: auto;
   border-radius: 50%;
   background:
     radial-gradient(circle at center, var(--surface) 0 58%, transparent 59%),
@@ -1592,6 +1611,19 @@ textarea {
   align-items: center;
   justify-content: center;
   animation: ringPop 600ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 16px 34px rgba(91, 94, 244, 0.12);
+  isolation: isolate;
+  overflow: visible;
+  position: relative;
+}
+
+.results-ring::after {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  border-radius: 999px;
+  border: 1px solid rgba(91, 94, 244, 0.12);
+  animation: ringAura 3.2s ease-in-out infinite;
 }
 
 .results-ring strong {
@@ -1638,6 +1670,12 @@ textarea {
   display: grid;
   gap: 0.28rem;
   animation: fadeSlideUp 360ms ease both;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.results-stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 26px rgba(15, 23, 42, 0.06);
 }
 
 .results-stat-card strong {
@@ -2082,6 +2120,11 @@ textarea {
   100% { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+@keyframes ringAura {
+  0%, 100% { transform: scale(0.98); opacity: 0.45; }
+  50% { transform: scale(1.04); opacity: 0.9; }
+}
+
 @media (max-width: 1024px) {
   .quiz-main {
     padding-inline: 1rem;
@@ -2112,7 +2155,6 @@ textarea {
 @media (max-width: 680px) {
   .hero-mini-grid,
   .config-preview-grid,
-  .audience-strip,
   .landing-journey-grid,
   .landing-trust-grid {
     grid-template-columns: 1fr;

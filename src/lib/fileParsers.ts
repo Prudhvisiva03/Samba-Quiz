@@ -35,6 +35,20 @@ export async function extractPdfText(file: File) {
   return pageTexts.join('\n\n')
 }
 
+// Patterns that indicate PPTX navigation/structural text, not subject content
+const pptxNavPattern =
+  /^(\d{1,3}|[A-Z]{2,6}-\d{3,}|lesson\s*\d|topic\s*\d|module\s*\d|section\s*\d|unit\s*\d|slide\s*\d|chapter\s*\d|part\s*\d|lab\s*\d|objective\s*\d|\(continued.*\)|continued on|next slide|key demo|learning obj|review q|activity\s*\d|table of contents|copyright|\d+\s*[A-Z].{0,50}\.{3,}\s*\d+)/i
+
+function isNavFragment(text: string): boolean {
+  if (text.length < 4) return true
+  if (pptxNavPattern.test(text.trim())) return true
+  // Pure course codes: "XKO-005", "N10-008", "SY0-601" etc.
+  if (/^[A-Z]{2,4}\d*[-+]\d{3,}[a-z]?\s*$/.test(text)) return true
+  // Lines that are only numbers + short words (slide numbering artifacts)
+  if (/^\d+(\s+\d+)*\s*$/.test(text)) return true
+  return false
+}
+
 export async function extractPptxText(file: File) {
   const { default: JSZip } = await import('jszip')
   const zip = await JSZip.loadAsync(await file.arrayBuffer())
@@ -47,18 +61,28 @@ export async function extractPptxText(file: File) {
     })
 
   const slideTexts = await Promise.all(
-    slideNames.map(async (name, index) => {
+    slideNames.map(async (name) => {
       const xml = await zip.file(name)?.async('string')
-      if (!xml) {
-        return ''
+      if (!xml) return ''
+
+      // Extract all paragraph blocks (<a:p>...</a:p>) separately so each
+      // text run stays in its natural paragraph boundary.
+      const paragraphs: string[] = []
+      for (const paraMatch of xml.matchAll(/<a:p>([\s\S]*?)<\/a:p>/g)) {
+        const runs = Array.from(paraMatch[1].matchAll(/<a:t>(.*?)<\/a:t>/g))
+          .map((m) => cleanupText(decodeXml(m[1])))
+          .filter(Boolean)
+        if (runs.length === 0) continue
+        const paraText = runs.join(' ')
+        // Drop navigation / structural fragments
+        if (isNavFragment(paraText)) continue
+        // Drop very short fragments (headers/labels under 20 chars) UNLESS they look like full sentences
+        if (paraText.length < 20 && !/[.!?]$/.test(paraText)) continue
+        paragraphs.push(paraText)
       }
 
-      const fragments = Array.from(xml.matchAll(/<a:t>(.*?)<\/a:t>/g)).map((match) =>
-        cleanupText(decodeXml(match[1])),
-      )
-
-      const slideText = fragments.filter(Boolean).join(' ')
-      return slideText ? `Slide ${index + 1}: ${slideText}` : ''
+      if (paragraphs.length === 0) return ''
+      return paragraphs.join(' ')
     }),
   )
 

@@ -34,9 +34,21 @@ function cleanText(text) {
 
 function stripPptxArtifacts(text) {
   return text
+    // Slide prefixes
     .replace(/Slide\s+\d+\s*:\s*/gi, '')
-    .replace(/\b(Lab Activity|Assisted Lab|Learning Objective[s]?|Review Question[s]?)\b[:\s]*/gi, '')
-    .replace(/\s+/g, ' ')
+    // Navigation / continuation markers
+    .replace(/\(continued\s+on\s+next\s+slide\)/gi, '')
+    .replace(/\bcontinued\b[^\n]*/gi, '')
+    // Course/exam codes at start of phrase: "XKO-005", "N10-008", "CompTIA Linux+"
+    .replace(/\b[A-Z]{2,5}\d*[-+]\d{3,}[A-Za-z]?\b/g, '')
+    // Lesson / topic / module / unit / section structural labels
+    .replace(/\b(Lesson|Topic|Module|Unit|Section|Chapter|Part|Lab|Objective|Activity|Exam)\s+\d+[A-Za-z]?\b[:\s]*/gi, '')
+    // "Key Demonstration:" / "Learning Objectives" / "Review Questions"
+    .replace(/\b(Lab Activity|Assisted Lab|Key Demonstration|Learning Objective[s]?|Review Question[s]?|Exam Objective[s]?)\b[:\s]*/gi, '')
+    // Lines that start with a number followed by a heading (TOC/outline artifacts)
+    .replace(/^\s*\d{1,3}\s+[A-Z][^\n]{0,60}$/gm, '')
+    // "Administering Users and Groups" style section headers (all-title-case, no verb)
+    .replace(/\s{2,}/g, ' ')
     .trim()
 }
 
@@ -68,7 +80,7 @@ function stripBookMetadata(text) {
     .trim()
 }
 
-function clampText(text, maxLength = 10000) {
+function clampText(text, maxLength = 6000) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
 }
 
@@ -148,7 +160,7 @@ function answerSupportedByExcerpt(answer, excerpt) {
 }
 
 // Sentences that are purely book metadata — never make good quiz questions
-const metaSentencePattern = /\b(author|authors|publisher|isbn|copyright|edition|textbook|this book|this text|printed|published by|all rights|acknowledgement|preface|foreword|dedication|acknowledgment)\b/i
+const metaSentencePattern = /\b(author|authors|publisher|isbn|copyright|edition|textbook|this book|this text|printed|published by|all rights|acknowledgement|preface|foreword|dedication|acknowledgment|lesson\s*\d|topic\s*\d|module\s*\d|continued on next|key demonstration|lab activity|learning objectives?|exam objectives?|review questions?)\b/i
 
 function buildCandidates(safeSentences) {
   const candidates = []
@@ -395,7 +407,7 @@ ${clampText(sourceText)}`
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.55,
-        max_tokens: 16000,
+        max_tokens: 5000,
         extra_body: { chat_template_kwargs: { thinking: false } },
       },
       { signal: controller.signal },
@@ -458,7 +470,7 @@ app.post('/api/generate-quiz', async (request, response) => {
   }
 
   try {
-    const generationText = hasEnoughMaterial ? sourceText : buildTopicSource(sourceText, options, metadata)
+    const generationText = hasEnoughMaterial ? cleanedText : buildTopicSource(sourceText, options, metadata)
     const quiz = await generateWithOpenAI(generationText, options, metadata, fallbackQuiz)
     response.json(quiz)
   } catch (err) {

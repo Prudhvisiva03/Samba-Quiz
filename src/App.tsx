@@ -68,6 +68,15 @@ const landingJourney = [
   { title: '3. Learn Fast', text: 'Check answers, review mistakes, and ask the helper for simple explanations.' },
 ]
 
+function isExcerptRelevant(explanation: string, excerpt: string): boolean {
+  if (!excerpt || !explanation) return false
+  const expl = explanation.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
+  const exc = excerpt.toLowerCase()
+  const words = expl.split(/\s+/).filter((w) => w.length > 4)
+  const matches = words.filter((w) => exc.includes(w)).length
+  return matches >= Math.max(1, Math.ceil(words.length * 0.25))
+}
+
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
 const CONFETTI = ['#5b5ef4', '#f59e0b', '#16a34a', '#ef4444', '#8b5cf6', '#0ea5e9', '#f472b6']
 
@@ -1138,7 +1147,9 @@ export default function App() {
                   <strong>{chosen === question.answerIndex ? '✓ Correct!' : '✗ Not quite.'}</strong>
                   <p>{question.explanation}</p>
                   {question.sourceHint && <p className="source-hint">📚 {question.sourceHint}</p>}
-                  {question.sourceExcerpt && <p className="source-proof">From your notes: "${question.sourceExcerpt}"</p>}
+                  {question.sourceExcerpt && isExcerptRelevant(question.explanation, question.sourceExcerpt) && (
+                    <p className="source-proof">From your notes: "{question.sourceExcerpt}"</p>
+                  )}
                 </div>
               )}
             </div>
@@ -1265,7 +1276,9 @@ export default function App() {
                       ))}
                     </div>
                     {item.explanation && <p className="review-explain">{item.explanation}</p>}
-                    {item.sourceExcerpt && <p className="review-proof">From your notes: "${item.sourceExcerpt}"</p>}
+                    {item.sourceExcerpt && isExcerptRelevant(item.explanation, item.sourceExcerpt) && (
+                      <p className="review-proof">From your notes: "{item.sourceExcerpt}"</p>
+                    )}
                   </div>
                 ))}
             </section>

@@ -331,7 +331,7 @@ function normalizeQuiz(payload, fallbackQuiz) {
         sourceExcerpt:
           typeof question.sourceExcerpt === 'string' && answerSupportedByExcerpt(optionsList[answerIndex], question.sourceExcerpt)
             ? shortenExcerpt(question.sourceExcerpt)
-            : fallbackQuestion.sourceExcerpt,
+            : '',  // hide when excerpt is irrelevant — never show random fallback text
       }
     }),
     sourceType: 'OpenAI generated',

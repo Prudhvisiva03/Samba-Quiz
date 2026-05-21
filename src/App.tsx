@@ -26,18 +26,13 @@ const initialForm: QuizForm = {
   learnerGoal: 'Fast revision with memorable explanations.',
 }
 
-const subjectChips = [
-  { id: 'cs',          label: 'Computer Science', emoji: '💻' },
-  { id: 'bio',         label: 'Biology',           emoji: '🧬' },
-  { id: 'chem',        label: 'Chemistry',         emoji: '⚗️' },
-  { id: 'physics',     label: 'Physics',           emoji: '⚛️' },
-  { id: 'math',        label: 'Mathematics',       emoji: '📐' },
-  { id: 'engineering', label: 'Engineering',       emoji: '⚙️' },
-  { id: 'history',     label: 'History',           emoji: '📜' },
-  { id: 'nursing',     label: 'Nursing / Medical', emoji: '🏥' },
-  { id: 'business',    label: 'Business',          emoji: '📊' },
-  { id: 'law',         label: 'Law',               emoji: '⚖️' },
-  { id: 'other',       label: 'Others',            emoji: '✏️' },
+const examTypeOptions = [
+  { id: 'university', label: 'University Exam' },
+  { id: 'government', label: 'Government Exam' },
+  { id: 'school', label: 'School Exam' },
+  { id: 'practice', label: 'Practice Test' },
+  { id: 'certification', label: 'Certification Exam' },
+  { id: 'other', label: 'Other' },
 ]
 
 const modes = [
@@ -61,6 +56,28 @@ const heroHighlights = [
     title: 'Understand faster',
     text: 'Get instant explanations whenever a concept feels confusing.',
   },
+  {
+    title: 'Source grounded',
+    text: 'Each answer can be checked against the uploaded notes for safer end-term revision.',
+  },
+]
+
+const audienceBands = [
+  { title: 'Class 5 to 10', text: 'Simple practice, colorful flow, and easy explanations.' },
+  { title: 'Intermediate', text: 'Quick recall, chapter practice, and exam-friendly revision.' },
+  { title: 'Degree & BTech', text: 'Source-based MCQs, tighter distractors, and concept review.' },
+]
+
+const landingJourney = [
+  { title: '1. Upload Notes', text: 'Add a PDF, PPTX, or text in one tap and let the app clean it up.' },
+  { title: '2. Build a Quiz', text: 'Get source-grounded MCQs with better options and short explanations.' },
+  { title: '3. Learn Fast', text: 'Check answers, review mistakes, and ask the helper for simple explanations.' },
+]
+
+const landingTrust = [
+  { title: 'Built for exams', text: 'Works for school tests, university internals, government prep, and practice sessions.' },
+  { title: 'Friendly by design', text: 'Playful visuals, animated helpers, and low-stress practice make studying easier.' },
+  { title: 'Safer revision', text: 'Answers now show proof from your notes so you can cross-check important facts.' },
 ]
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
@@ -149,7 +166,7 @@ function Mascot({ mood, compact = false }: { mood: MascotMood; compact?: boolean
   )
 }
 
-function BikeProgress({
+export function BikeProgress({
   progress,
   current,
   total,
@@ -380,9 +397,12 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
 
   useEffect(() => {
     if (!eatTick) return
-    setEating(true)
-    const id = window.setTimeout(() => setEating(false), 1100)
-    return () => window.clearTimeout(id)
+    const startId = window.setTimeout(() => setEating(true), 0)
+    const endId = window.setTimeout(() => setEating(false), 1100)
+    return () => {
+      window.clearTimeout(startId)
+      window.clearTimeout(endId)
+    }
   }, [eatTick])
 
   useEffect(() => {
@@ -429,7 +449,7 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
   }
 
   return (
-    <div className="companion-root" style={{ left: `${pos}%` }}>
+    <div className="companion-root" style={{ '--companion-left': `${pos}%` } as React.CSSProperties}>
       {chatOpen && (
         <div className="companion-panel">
           <div className="companion-panel-hdr">
@@ -769,19 +789,33 @@ export default function App() {
             </div>
 
             <div className="upload-hero">
+              <div className="landing-sparkles" aria-hidden>
+                <span>Learn</span>
+                <span>Practice</span>
+                <span>Score</span>
+              </div>
               <h1 className="upload-title">
                 Turn notes into a
                 <br />
                 <span>beautiful quiz flow</span>
               </h1>
               <p className="upload-sub">
-                Upload a PDF, PPTX, or plain text and get a clean, engaging quiz experience with explanations and active recall.
+                Upload a PDF, PPTX, or plain text and get a playful, source-grounded quiz experience built for everyone from Class 5 students to BTech learners.
               </p>
             </div>
 
             <div className="hero-mini-grid">
               {heroHighlights.map((item) => (
                 <article key={item.title} className="hero-mini-card">
+                  <strong>{item.title}</strong>
+                  <span>{item.text}</span>
+                </article>
+              ))}
+            </div>
+
+            <div className="audience-strip">
+              {audienceBands.map((item) => (
+                <article key={item.title} className="audience-card">
                   <strong>{item.title}</strong>
                   <span>{item.text}</span>
                 </article>
@@ -856,6 +890,41 @@ export default function App() {
               Continue to settings
             </button>
           </section>
+
+          <section className="surface-card landing-storyboard">
+            <div className="landing-storyboard-top">
+              <p className="section-label">How it works</p>
+              <h2 className="landing-heading">Study less passively. Practice more actively.</h2>
+              <p className="configure-sub">
+                The flow is simple enough for younger students, but strong enough for serious end-term and semester revision.
+              </p>
+            </div>
+
+            <div className="landing-journey-grid">
+              {landingJourney.map((item) => (
+                <article key={item.title} className="landing-journey-card">
+                  <strong>{item.title}</strong>
+                  <p>{item.text}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="surface-card landing-trust-panel">
+            <div className="landing-storyboard-top">
+              <p className="section-label">Why students like it</p>
+              <h2 className="landing-heading">Animations, guidance, and safer answers in one place.</h2>
+            </div>
+
+            <div className="landing-trust-grid">
+              {landingTrust.map((item) => (
+                <article key={item.title} className="landing-trust-card">
+                  <strong>{item.title}</strong>
+                  <p>{item.text}</p>
+                </article>
+              ))}
+            </div>
+          </section>
         </main>
 
         <p className="screen-footnote">
@@ -914,27 +983,29 @@ export default function App() {
               <p className="section-label">Settings</p>
               <div className="config-grid">
                 <div className="field field-full">
-                  <label className="field-label">Subject / Exam type</label>
-                  <div className="subject-chips">
-                    {subjectChips.map((chip) => (
-                      <button
-                        key={chip.id}
-                        type="button"
-                        className={`subject-chip${selectedSubject === chip.id ? ' active' : ''}`}
-                        onClick={() => {
-                          setSelectedSubject(chip.id)
-                          if (chip.id !== 'other') {
-                            setField('examName', chip.label)
-                          } else {
-                            setField('examName', customSubject)
-                          }
-                        }}
-                      >
-                        <span className="subject-chip-emoji">{chip.emoji}</span>
-                        {chip.label}
-                      </button>
+                  <label className="field-label" htmlFor="f-exam-category">Exam type</label>
+                  <select
+                    id="f-exam-category"
+                    value={selectedSubject}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setSelectedSubject(value)
+                      if (value !== 'other') {
+                        const option = examTypeOptions.find((item) => item.id === value)
+                        setField('examName', option?.label ?? '')
+                        setCustomSubject('')
+                      } else {
+                        setField('examName', customSubject)
+                      }
+                    }}
+                  >
+                    <option value="">Select exam type</option>
+                    {examTypeOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
                     ))}
-                  </div>
+                  </select>
                   {selectedSubject === 'other' && (
                     <input
                       className="custom-subject-input"
@@ -943,7 +1014,7 @@ export default function App() {
                         setCustomSubject(e.target.value)
                         setField('examName', e.target.value)
                       }}
-                      placeholder="Type your subject or exam name…"
+                      placeholder="Type your exam name..."
                       autoFocus
                     />
                   )}
@@ -1086,6 +1157,7 @@ export default function App() {
                   <strong>{chosen === question.answerIndex ? '✓ Correct!' : '✗ Not quite.'}</strong>
                   <p>{question.explanation}</p>
                   {question.sourceHint && <p className="source-hint">📚 {question.sourceHint}</p>}
+                  {question.sourceExcerpt && <p className="source-proof">From your notes: "${question.sourceExcerpt}"</p>}
                 </div>
               )}
             </div>
@@ -1128,62 +1200,69 @@ export default function App() {
         </header>
 
         <main className="screen-body results-body">
-          <Mascot mood={mascotMood} />
-
-          <div className="results-ring" style={{ '--ring-pct': `${pct}` } as React.CSSProperties}>
-            <strong>{pct}%</strong>
-            <span>Score</span>
-          </div>
-
-          <h2 className="results-heading">
-            {userName
-              ? pct >= 80
-                ? `Incredible work, ${userName}!`
-                : pct >= 60
-                  ? `Good progress, ${userName}!`
-                  : `Keep going, ${userName}!`
-              : pct >= 80
-                ? 'Outstanding!'
-                : pct >= 60
-                  ? 'Good work!'
-                  : 'Keep practicing!'}
-          </h2>
-          <p className="results-sub">{score.correct} of {score.total} questions answered correctly.</p>
-
-          <div className="results-stats">
-            <div className="rstat">
-              <strong>{score.correct}</strong>
-              <span>Correct</span>
+          <section className="surface-card results-hero">
+            <div className="results-hero-top">
+              <Mascot mood={mascotMood} />
+              <div className="results-ring" style={{ '--ring-pct': `${pct}` } as React.CSSProperties}>
+                <strong>{pct}%</strong>
+                <span>Score</span>
+              </div>
             </div>
-            <div className="rstat-divider" />
-            <div className="rstat">
-              <strong>{score.total - score.correct}</strong>
-              <span>Missed</span>
-            </div>
-            <div className="rstat-divider" />
-            <div className="rstat">
-              <strong>{pct}%</strong>
-              <span>Accuracy</span>
-            </div>
-          </div>
 
-          <div className="results-actions">
-            {score.total - score.correct > 0 && (
-              <button className="retry-wrong-btn" onClick={retryWrong}>
-                Retry missed questions <span className="wrong-count-badge">{score.total - score.correct}</span>
+            <div className="results-copy">
+              <span className="results-kicker">Quiz complete</span>
+              <h2 className="results-heading">
+                {userName
+                  ? pct >= 80
+                    ? `Incredible work, ${userName}!`
+                    : pct >= 60
+                      ? `Good progress, ${userName}!`
+                      : `Keep going, ${userName}!`
+                  : pct >= 80
+                    ? 'Outstanding!'
+                    : pct >= 60
+                      ? 'Good work!'
+                      : 'Keep practicing!'}
+              </h2>
+              <p className="results-sub">{score.correct} of {score.total} questions answered correctly.</p>
+            </div>
+
+            <div className="results-stat-grid">
+              <article className="results-stat-card">
+                <strong>{score.correct}</strong>
+                <span>Correct answers</span>
+              </article>
+              <article className="results-stat-card">
+                <strong>{score.total - score.correct}</strong>
+                <span>Need review</span>
+              </article>
+              <article className="results-stat-card">
+                <strong>{score.total}</strong>
+                <span>Total questions</span>
+              </article>
+            </div>
+
+            <div className="results-actions">
+              {score.total - score.correct > 0 && (
+                <button className="retry-wrong-btn" onClick={retryWrong}>
+                  Retry missed questions <span className="wrong-count-badge">{score.total - score.correct}</span>
+                </button>
+              )}
+              <button className="secondary-btn btn-lg" onClick={() => { setAnswers({}); setIdx(0); setStep('quiz') }}>
+                Try again
               </button>
-            )}
-            <button className="secondary-btn btn-lg" onClick={() => { setAnswers({}); setIdx(0); setStep('quiz') }}>
-              Try again
-            </button>
-            <button className="primary-btn btn-lg" onClick={reset}>
-              New quiz
-            </button>
-          </div>
+              <button className="primary-btn btn-lg" onClick={reset}>
+                New quiz
+              </button>
+            </div>
+          </section>
 
           {score.total - score.correct > 0 && (
-            <div className="review-section">
-              <p className="section-label">Review missed answers</p>
+            <section className="surface-card review-section">
+              <div className="results-section-top">
+                <p className="section-label">Review missed answers</p>
+                <span className="results-section-note">See the correct option and a quick explanation.</span>
+              </div>
               {quiz.questions
                 .filter((item) => answers[item.id] !== item.answerIndex)
                 .map((item, reviewIndex) => (
@@ -1205,20 +1284,24 @@ export default function App() {
                       ))}
                     </div>
                     {item.explanation && <p className="review-explain">{item.explanation}</p>}
+                    {item.sourceExcerpt && <p className="review-proof">From your notes: "${item.sourceExcerpt}"</p>}
                   </div>
                 ))}
-            </div>
+            </section>
           )}
 
           {quiz.flashSummary.length > 0 && (
-            <div className="results-topics">
-              <p className="topics-label">Topics covered</p>
+            <section className="surface-card results-topics">
+              <div className="results-section-top">
+                <p className="topics-label">Topics covered</p>
+                <span className="results-section-note">Quick concepts from this session.</span>
+              </div>
               <div className="topics-wrap">
                 {quiz.flashSummary.map((topic) => (
                   <span className="topic-tag" key={topic}>{topic}</span>
                 ))}
               </div>
-            </div>
+            </section>
           )}
         </main>
       </div>

@@ -8,6 +8,7 @@ export type QuizQuestion = {
   explanation: string
   difficulty: Difficulty
   sourceHint?: string
+  sourceExcerpt?: string
 }
 
 export type QuizPayload = {

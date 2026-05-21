@@ -82,6 +82,29 @@ function cap(str) {
   return str.charAt(0).toUpperCase() + str.slice(1)
 }
 
+function shortenExcerpt(text, maxLength = 180) {
+  const clean = cleanText(String(text ?? ''))
+  return clean.length > maxLength ? `${clean.slice(0, maxLength).trim()}...` : clean
+}
+
+function answerSupportedByExcerpt(answer, excerpt) {
+  const safeAnswer = cleanText(String(answer ?? '')).toLowerCase()
+  const safeExcerpt = cleanText(String(excerpt ?? '')).toLowerCase()
+  if (!safeAnswer || !safeExcerpt) return false
+
+  const answerTokens = safeAnswer
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length > 3)
+
+  if (answerTokens.length === 0) {
+    return safeExcerpt.includes(safeAnswer)
+  }
+
+  const matched = answerTokens.filter((token) => safeExcerpt.includes(token)).length
+  return matched >= Math.max(1, Math.ceil(answerTokens.length * 0.6))
+}
+
 function buildCandidates(safeSentences) {
   const candidates = []
   for (const sentence of safeSentences) {
@@ -173,6 +196,7 @@ function buildFallbackQuiz(sourceText, options, metadata) {
       explanation: `Correct answer: ${answer}. From the material: "${cand.sentence.slice(0, 160)}"`,
       difficulty: options.difficultyMix ?? 'medium',
       sourceHint: metadata.fileName || metadata.mode || 'Uploaded notes',
+      sourceExcerpt: shortenExcerpt(cand.sentence),
     }
   })
 
@@ -223,6 +247,10 @@ function normalizeQuiz(payload, fallbackQuiz) {
             : fallbackQuestion.difficulty,
         sourceHint:
           typeof question.sourceHint === 'string' ? question.sourceHint : fallbackQuestion.sourceHint,
+        sourceExcerpt:
+          typeof question.sourceExcerpt === 'string' && answerSupportedByExcerpt(optionsList[answerIndex], question.sourceExcerpt)
+            ? shortenExcerpt(question.sourceExcerpt)
+            : fallbackQuestion.sourceExcerpt,
       }
     }),
     sourceType: 'OpenAI generated',
@@ -253,7 +281,8 @@ Return ONLY valid JSON — no extra text, no markdown fences.
       "answerIndex": 0,
       "explanation": "string (max 2 sentences, clear and direct)",
       "difficulty": "easy"|"medium"|"hard",
-      "sourceHint": "string"
+      "sourceHint": "string",
+      "sourceExcerpt": "string"
     }
   ]
 }
@@ -264,6 +293,9 @@ Rules:
 - Difficulty: ${options.difficultyMix}.${options.examName ? `\n- Subject/context: ${options.examName} — frame questions appropriately for this subject.` : ''}
 - Distractors must be plausible — not obviously wrong.
 - Explanations: short, direct, no filler.
+- Every question must include "sourceExcerpt" copied from the material.
+- The correct answer must be directly supported by "sourceExcerpt".
+- If support is weak, skip that fact and choose a better-supported one.
 - Do NOT reference slide numbers or page numbers in questions.
 - Only use facts from the material below.
 
@@ -299,6 +331,28 @@ ${clampText(sourceText)}`
   return normalizeQuiz(parsed, fallbackQuiz)
 }
 
+function buildLocalChatReply(context, userMessage) {
+  const ask = cleanText(String(userMessage ?? '')).toLowerCase()
+  const hasContext = context && context.question
+
+  if (hasContext) {
+    const correctAnswer = context.options?.[context.answerIndex] ?? 'the correct option'
+    const explanation = cleanText(String(context.explanation ?? ''))
+
+    if (ask.includes('correct') || ask.includes('answer')) {
+      return `The correct answer is "${correctAnswer}". ${explanation || 'It best matches the main idea from your notes.'}`
+    }
+
+    if (ask.includes('simple') || ask.includes('easy') || ask.includes('why') || ask.includes('explain')) {
+      return `In simple words, "${correctAnswer}" is the right choice. ${explanation || 'Look for the option that matches the key concept in the question.'}`
+    }
+
+    return `This question is mainly about the idea behind "${correctAnswer}". ${explanation || 'Ask me to explain it in simpler words or compare the options one by one.'}`
+  }
+
+  return 'I can help with normal study doubts too. Ask me any topic or concept, and I will explain it in simple exam-friendly English.'
+}
+
 app.post('/api/generate-quiz', async (request, response) => {
   const sourceText = cleanText(String(request.body?.sourceText ?? ''))
   const options = request.body?.options ?? {}
@@ -328,21 +382,21 @@ app.post('/api/generate-quiz', async (request, response) => {
 })
 
 app.post('/api/chat', async (request, response) => {
-  if (!openai) {
-    response.json({ reply: 'AI not configured — add OPENAI_API_KEY to .env' })
-    return
-  }
-
   const { context, userMessage } = request.body
   if (!userMessage?.trim()) {
     response.status(400).json({ message: 'Message required.' })
     return
   }
 
+  if (!openai) {
+    response.json({ reply: buildLocalChatReply(context, userMessage) })
+    return
+  }
+
   const hasContext = context && context.question
   const opts = hasContext ? (context.options ?? []).map((o, i) => `${String.fromCharCode(65 + i)}) ${o}`).join('\n') : ''
   const prompt = hasContext
-    ? `You are a friendly, concise exam tutor helping a student with this quiz question.
+    ? `You are a friendly exam tutor helping a student with one quiz question.
 
 Q: "${context.question}"
 Options:
@@ -352,10 +406,23 @@ Explanation: ${context.explanation ?? ''}
 
 Student asks: "${userMessage}"
 
-Reply in 2-3 sentences. Be direct, clear, and encouraging.`
-    : `You are a friendly quiz and study assistant. The student says: "${userMessage}"
+Rules:
+- Explain in simple English.
+- Be correct, calm, and easy to follow.
+- Use 3 to 5 short sentences.
+- If useful, say the correct answer clearly.
+- If a hard word appears, explain it simply.
+- Focus on helping the student understand fast.`
+    : `You are a friendly quiz and study assistant.
 
-Reply helpfully in 2-3 sentences. Be encouraging and concise.`
+Student asks: "${userMessage}"
+
+Rules:
+- Reply in simple English.
+- Be helpful for both question-specific and normal study doubts.
+- Use 3 to 5 short sentences.
+- If useful, give one tiny example.
+- Avoid long theory unless the student asks for detail.`
 
   try {
     const completion = await openai.chat.completions.create({
@@ -368,7 +435,7 @@ Reply helpfully in 2-3 sentences. Be encouraging and concise.`
     response.json({ reply: completion.choices[0]?.message?.content ?? 'No response.' })
   } catch (err) {
     console.error('[Chat error]', err?.message ?? err)
-    response.status(500).json({ reply: 'AI error — try again.' })
+    response.status(500).json({ reply: buildLocalChatReply(context, userMessage) })
   }
 })
 

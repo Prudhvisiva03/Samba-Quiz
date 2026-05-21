@@ -1015,7 +1015,7 @@ export default function App() {
                     id="f-count"
                     type="number"
                     min={5}
-                    max={20}
+                    max={50}
                     value={form.questionCount}
                     onChange={(event) => setField('questionCount', Number(event.target.value))}
                   />

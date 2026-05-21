@@ -333,9 +333,9 @@ export function BikeProgress({
 /* ── FLOATING CAT COMPANION ─────────────────────────────────────────────── */
 function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eatTick?: number }) {
   const svgRef = useRef<SVGSVGElement>(null)
-  const posRef = useRef(14)
+  const posRef = useRef(78)
   const [pupil, setPupil] = useState({ x: 0, y: 0 })
-  const [pos, setPos] = useState(14)
+  const [pos, setPos] = useState(78)
   const [moving, setMoving] = useState(false)
   const [facingLeft, setFacingLeft] = useState(false)
   const [paused, setPaused] = useState(false)
@@ -367,7 +367,10 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
   useEffect(() => {
     if (paused) return
     const id = window.setInterval(() => {
-      const next = Math.floor(8 + Math.random() * 74)
+      // Stay in left zone (8–38%) or right zone (62–82%) — never the center where buttons live
+      const next = Math.random() < 0.5
+        ? Math.floor(8 + Math.random() * 30)   // left zone
+        : Math.floor(62 + Math.random() * 20)  // right zone
       setFacingLeft(next < posRef.current)
       posRef.current = next
       setPos(next)

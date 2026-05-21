@@ -40,6 +40,34 @@ function stripPptxArtifacts(text) {
     .trim()
 }
 
+// Strips book front-matter so AI never generates questions about author/ISBN/publisher/title
+function stripBookMetadata(text) {
+  return text
+    // ISBN — e.g. "ISBN 978-0-13-468599-1", "ISBN-13:", "ISBN-10:"
+    .replace(/\bISBN[-\s]*(1[03])?[:\s]*[\d\s\-Xx]{9,17}/gi, '')
+    // Copyright lines — "© 2023 Pearson", "Copyright 2022 by ..."
+    .replace(/©[^\n]*/g, '')
+    .replace(/copyright\s+(?:©\s*)?\d{4}[^\n]*/gi, '')
+    .replace(/all rights reserved[^\n]*/gi, '')
+    // Printed / published lines
+    .replace(/printed in[^\n]*/gi, '')
+    .replace(/published by[^\n]*/gi, '')
+    .replace(/\bpublisher[:\s][^\n]*/gi, '')
+    // Edition lines — "Third Edition", "2nd Edition", "Revised Edition"
+    .replace(/\b(?:\d+(?:st|nd|rd|th)|revised|second|third|fourth|fifth|sixth)\s+edition\b[^\n]*/gi, '')
+    // "by Author Name" standalone lines
+    .replace(/^by\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\s*$/gm, '')
+    // Table of contents entries: "Chapter Name .......... 42"
+    .replace(/^.{5,70}[.\s]{4,}\d+\s*$/gm, '')
+    // Lines that are just a number (page numbers from PDF)
+    .replace(/^\s*\d{1,4}\s*$/gm, '')
+    // "Version X.X" lines
+    .replace(/\bversion\s+[\d.]+[^\n]*/gi, '')
+    // Normalize whitespace
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
 function clampText(text, maxLength = 10000) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
 }
@@ -119,9 +147,13 @@ function answerSupportedByExcerpt(answer, excerpt) {
   return matched >= Math.max(1, Math.ceil(answerTokens.length * 0.6))
 }
 
+// Sentences that are purely book metadata — never make good quiz questions
+const metaSentencePattern = /\b(author|authors|publisher|isbn|copyright|edition|textbook|this book|this text|printed|published by|all rights|acknowledgement|preface|foreword|dedication|acknowledgment)\b/i
+
 function buildCandidates(safeSentences) {
   const candidates = []
   for (const sentence of safeSentences) {
+    if (metaSentencePattern.test(sentence)) continue
     // "X is/are [the|a|an] Y..." → "What is/are X?"
     const defMatch = sentence.match(/^([A-Z][^,]{2,50}?)\s+(is|are)\s+(?:the\s+|a\s+|an\s+)?(.{20,200})$/i)
     if (defMatch) {
@@ -346,8 +378,10 @@ Rules:
 - Every question must include "sourceExcerpt" copied from the material.
 - The correct answer must be directly supported by "sourceExcerpt".
 - If support is weak, skip that fact and choose a better-supported one.
+- NEVER ask about the book title, author name, publisher, ISBN, edition number, copyright year, or any front-matter / preface content. These are NOT exam topics.
+- NEVER ask "What is the name of this textbook?" or "Who wrote this book?" type questions.
 - Do NOT reference slide numbers or page numbers in questions.
-- ${topicOnly ? 'Use standard, reliable knowledge for the typed topic below.' : 'Only use facts from the material below.'}
+- ${topicOnly ? 'Use standard, reliable knowledge for the typed topic below.' : 'Only use facts from the subject-content in the material below — skip any cover page, title page, TOC, or author bio.'}
 
 Material:
 ${clampText(sourceText)}`
@@ -410,8 +444,8 @@ app.post('/api/generate-quiz', async (request, response) => {
   const topicOnly = cleanText(String(metadata.inputMode ?? '')) === 'topic'
   const hasEnoughMaterial = sourceText.length >= 120
 
-  // Strip PPTX "Slide N:" artifacts before building fallback so questions don't ask about "Slide"
-  const cleanedText = stripPptxArtifacts(sourceText)
+  // Strip PPTX artifacts + book front-matter (author, ISBN, publisher, copyright, TOC)
+  const cleanedText = stripBookMetadata(stripPptxArtifacts(sourceText))
   const fallbackQuiz = hasEnoughMaterial
     ? buildFallbackQuiz(cleanedText, options, metadata)
     : buildTopicFallbackQuiz(sourceText, options, metadata)

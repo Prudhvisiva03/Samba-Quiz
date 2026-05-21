@@ -2461,8 +2461,8 @@ textarea {
 
 .companion-root {
   position: fixed;
-  bottom: 1.2rem;
-  left: clamp(56px, var(--companion-left, 14%), calc(100vw - 56px));
+  bottom: 10rem;
+  left: clamp(56px, var(--companion-left, 78%), calc(100vw - 56px));
   transform: translateX(-50%);
   transition: left 3.6s cubic-bezier(0.45, 0, 0.55, 1);
   z-index: 250;
@@ -2770,8 +2770,8 @@ textarea {
 
 @media (max-width: 680px) {
   .companion-root {
-    left: clamp(48px, var(--companion-left, 18%), calc(100vw - 48px));
-    bottom: 0.9rem;
+    left: clamp(48px, var(--companion-left, 78%), calc(100vw - 48px));
+    bottom: 7rem;
   }
 
   .companion-svg {

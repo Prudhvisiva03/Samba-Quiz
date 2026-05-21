@@ -205,7 +205,7 @@ function buildCandidates(safeSentences) {
 function buildFallbackQuiz(sourceText, options, metadata) {
   const sentences = splitSentences(sourceText)
   const keywords = collectKeywords(sourceText)
-  const count = Math.min(Math.max(Number(options.questionCount) || 8, 5), 15)
+  const count = Math.min(Math.max(Number(options.questionCount) || 8, 5), 20)
   const safeSentences = sentences.length > 0 ? sentences : [cleanText(sourceText)]
   const flashSummary = safeSentences.slice(0, 4).map((sentence) => sentence.slice(0, 120))
 
@@ -256,7 +256,7 @@ function buildFallbackQuiz(sourceText, options, metadata) {
 
 function buildTopicFallbackQuiz(sourceText, options, metadata) {
   const topic = cleanText(sourceText || options.examName || 'This topic')
-  const count = Math.min(Math.max(Number(options.questionCount) || 8, 5), 15)
+  const count = Math.min(Math.max(Number(options.questionCount) || 8, 5), 20)
 
   return {
     title: `${options.examName || topic} Quiz Builder`,
@@ -395,7 +395,7 @@ ${clampText(sourceText)}`
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.55,
-        max_tokens: 6000,
+        max_tokens: 8000,
         extra_body: { chat_template_kwargs: { thinking: false } },
       },
       { signal: controller.signal },

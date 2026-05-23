@@ -9,7 +9,9 @@ dotenv.config({ override: true })
 
 const app = express()
 const port = Number.parseInt(process.env.PORT ?? '8787', 10)
-const model = process.env.OPENAI_MODEL ?? 'deepseek-ai/deepseek-r1'
+// llama-3.3-70b is fast, reliable at JSON, and doesn't produce thinking blocks.
+// Users can override via OPENAI_MODEL env var.
+const model = process.env.OPENAI_MODEL ?? 'meta/llama-3.3-70b-instruct'
 const apiKey = process.env.OPENAI_API_KEY
 const baseURL = process.env.OPENAI_BASE_URL
 const openai = apiKey ? new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }) : null
@@ -98,19 +100,72 @@ function buildTopicSource(sourceText, options = {}, metadata = {}) {
     .join(' ')
 }
 
+function cleanRaw(rawText) {
+  return rawText
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')   // strip reasoning blocks
+    .replace(/^```(?:json)?\s*/im, '')             // strip opening code fence
+    .replace(/\s*```\s*$/im, '')                   // strip closing code fence
+    .trim()
+}
+
 function extractJson(rawText) {
-  // Strip <think>...</think> reasoning blocks produced by kimi-k2, deepseek-r1, etc.
-  let cleaned = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
-  // Strip markdown code fences  (```json ... ```)
-  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  const cleaned = cleanRaw(rawText)
   const start = cleaned.indexOf('{')
   const end = cleaned.lastIndexOf('}')
   if (start === -1 || end === -1 || end <= start) return null
-  try {
-    return JSON.parse(cleaned.slice(start, end + 1))
-  } catch {
-    return null
+  try { return JSON.parse(cleaned.slice(start, end + 1)) } catch { return null }
+}
+
+// Try to salvage a JSON response that was cut off mid-generation
+function repairJson(rawText) {
+  const text = cleanRaw(rawText)
+  const start = text.indexOf('{')
+  if (start === -1) return null
+  const body = text.slice(start)
+
+  // Try appending common closing sequences
+  for (const suffix of ['"}]}', '"]}', ']}', '}]', '}}', '}']) {
+    try {
+      const r = JSON.parse(body + suffix)
+      if (r?.questions?.length > 0) return r
+    } catch { /* try next */ }
   }
+
+  // Find the last fully-formed question object by scanning for the last answerIndex
+  const hits = [...body.matchAll(/"answerIndex"\s*:\s*\d/g)]
+  if (hits.length === 0) return null
+  const lastHit = hits[hits.length - 1]
+  let depth = 0, closeIdx = -1
+  for (let i = lastHit.index; i < body.length; i++) {
+    if (body[i] === '{') depth++
+    else if (body[i] === '}') { depth--; if (depth <= 0) { closeIdx = i; break } }
+  }
+  if (closeIdx === -1) return null
+
+  // Wrap partial questions array
+  const arrStart = body.indexOf('[')
+  if (arrStart === -1) return null
+  try {
+    const partial = body.slice(arrStart, closeIdx + 1) + ']'
+    const questions = JSON.parse(partial)
+    if (Array.isArray(questions) && questions.length > 0) {
+      return { title: 'Quiz', flashSummary: [], questions }
+    }
+  } catch { /* no luck */ }
+  return null
+}
+
+// Returns true if AI quiz looks like real questions (not slide-text garbage)
+function isGoodQuiz(quiz) {
+  if (!quiz?.questions?.length) return false
+  const bad = quiz.questions.filter((q) => {
+    // Bad signal: options that are very long raw-text fragments with no sentence structure
+    const longRaw = q.options?.filter((o) => o.length > 90 && !/[.!?]$/.test(o)).length ?? 0
+    // Bad signal: question text is under 20 chars or is just "Review this concept"
+    const trivialQ = !q.question || q.question.length < 18 || /review this concept/i.test(q.question)
+    return longRaw >= 2 || trivialQ
+  }).length
+  return bad < quiz.questions.length * 0.4
 }
 
 function splitSentences(sourceText) {
@@ -299,136 +354,141 @@ function buildTopicFallbackQuiz(sourceText, options, metadata) {
 }
 
 function normalizeQuiz(payload, fallbackQuiz) {
-  if (!payload || typeof payload !== 'object') {
-    return fallbackQuiz
-  }
+  if (!payload || typeof payload !== 'object') return fallbackQuiz
+  const rawQs = Array.isArray(payload.questions) ? payload.questions : []
+  if (rawQs.length === 0) return fallbackQuiz
 
-  const questions = Array.isArray(payload.questions) ? payload.questions : []
-  if (questions.length === 0) {
-    return fallbackQuiz
-  }
+  const diff = fallbackQuiz.questions[0]?.difficulty ?? 'medium'
 
+  const questions = rawQs
+    .slice(0, fallbackQuiz.questions.length)
+    .map((q, i) => {
+      if (!q || typeof q !== 'object') return null
+      const opts = Array.isArray(q.options)
+        ? q.options.map((o) => String(o).slice(0, 200)).slice(0, 4)
+        : []
+      if (opts.length < 4) return null   // drop malformed question entirely — never pad with garbage
+      const ai = typeof q.answerIndex === 'number' && q.answerIndex >= 0 && q.answerIndex < opts.length
+        ? q.answerIndex : 0
+      return {
+        id: `ai-${i + 1}`,
+        question: typeof q.question === 'string' && q.question.length > 5 ? q.question : null,
+        options: opts,
+        answerIndex: ai,
+        explanation: typeof q.explanation === 'string' ? q.explanation : '',
+        difficulty: ['easy', 'medium', 'hard'].includes(q.difficulty) ? q.difficulty : diff,
+        sourceHint: typeof q.sourceHint === 'string' ? q.sourceHint : '',
+        sourceExcerpt:
+          typeof q.sourceExcerpt === 'string' && answerSupportedByExcerpt(opts[ai], q.sourceExcerpt)
+            ? shortenExcerpt(q.sourceExcerpt)
+            : '',
+      }
+    })
+    .filter((q) => q !== null && q.question !== null)
+
+  if (questions.length === 0) return fallbackQuiz
   return {
     title: typeof payload.title === 'string' ? payload.title : fallbackQuiz.title,
     flashSummary:
       Array.isArray(payload.flashSummary) && payload.flashSummary.length > 0
-        ? payload.flashSummary.map((item) => String(item)).slice(0, 5)
+        ? payload.flashSummary.map(String).slice(0, 5)
         : fallbackQuiz.flashSummary,
-    questions: questions.slice(0, fallbackQuiz.questions.length).map((question, index) => {
-      const fallbackQuestion = fallbackQuiz.questions[index]
-      const optionsList = Array.isArray(question.options)
-        ? question.options.map((option) => String(option)).slice(0, 4)
-        : fallbackQuestion.options
-      const answerIndex =
-        typeof question.answerIndex === 'number' && question.answerIndex >= 0 && question.answerIndex < optionsList.length
-          ? question.answerIndex
-          : fallbackQuestion.answerIndex
+    questions,
+    sourceType: 'AI generated',
+  }
+}
 
-      return {
-        id: `ai-${index + 1}`,
-        question: typeof question.question === 'string' ? question.question : fallbackQuestion.question,
-        options: optionsList.length >= 4 ? optionsList : fallbackQuestion.options,
-        answerIndex,
-        explanation:
-          typeof question.explanation === 'string' ? question.explanation : fallbackQuestion.explanation,
-        difficulty:
-          question.difficulty === 'easy' || question.difficulty === 'medium' || question.difficulty === 'hard'
-            ? question.difficulty
-            : fallbackQuestion.difficulty,
-        sourceHint:
-          typeof question.sourceHint === 'string' ? question.sourceHint : fallbackQuestion.sourceHint,
-        sourceExcerpt:
-          typeof question.sourceExcerpt === 'string' && answerSupportedByExcerpt(optionsList[answerIndex], question.sourceExcerpt)
-            ? shortenExcerpt(question.sourceExcerpt)
-            : '',  // hide when excerpt is irrelevant — never show random fallback text
-      }
-    }),
-    sourceType: 'OpenAI generated',
+function buildPrompt(sourceText, options, count, inputLimit, topicOnly) {
+  const examTypeLabel = {
+    mcq: 'multiple-choice questions (MCQ)',
+    scenario: 'scenario-based questions (describe a real situation, then ask)',
+    mixed: 'mix of standard MCQs and scenario-based questions',
+  }[options.examType] ?? 'multiple-choice questions'
+
+  return `You are an expert exam question writer. Output ONLY valid JSON, nothing else.
+
+JSON format:
+{"title":"string","flashSummary":["tip1","tip2","tip3"],"questions":[{"question":"string","options":["A","B","C","D"],"answerIndex":0,"explanation":"string","difficulty":"medium","sourceHint":"string","sourceExcerpt":"string"}]}
+
+Requirements:
+- Exactly ${count} questions total. Write all of them.
+- Style: ${examTypeLabel}
+- Difficulty: ${options.difficultyMix}${options.examName ? ` | Topic: ${options.examName}` : ''}
+- Each question MUST have exactly 4 short, clear answer options (under 60 chars each)
+- answerIndex is the index (0-3) of the correct option
+- Distractors must be plausible but wrong
+- explanation: 1-2 sentences, factual, explains WHY the answer is correct
+- sourceExcerpt: short phrase copied from the material supporting the answer
+- DO NOT ask about book titles, authors, slide numbers, course codes, or ISBNs
+- DO NOT use raw slide text or navigation labels as answer options
+- ${topicOnly ? 'Use your knowledge of the topic below.' : 'Only use facts from the material below.'}
+
+Material:
+${clampText(sourceText, inputLimit)}`
+}
+
+async function callAI(prompt, maxTokens, timeoutMs = 160000) {
+  const controller = new AbortController()
+  const tid = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const completion = await openai.chat.completions.create(
+      { model, messages: [{ role: 'user', content: prompt }], temperature: 0.45, max_tokens: maxTokens },
+      { signal: controller.signal },
+    )
+    return completion.choices[0]?.message?.content?.trim() ?? ''
+  } finally {
+    clearTimeout(tid)
   }
 }
 
 async function generateWithOpenAI(sourceText, options, metadata, fallbackQuiz) {
-  if (!openai) {
-    return fallbackQuiz
-  }
+  if (!openai) return fallbackQuiz
 
-  const count = fallbackQuiz.questions.length
-  // Each question needs ~380 tokens of output; add 800 for title/flashSummary/structure
-  const maxTokens = Math.min(Math.max(count * 380 + 800, 4500), 16000)
-  // Allow more input text for larger question counts so AI has enough material
-  const inputLimit = Math.min(Math.max(count * 300, 5000), 14000)
-
-  const examTypeLabel = {
-    mcq: 'standard multiple-choice questions',
-    scenario: 'scenario-based questions (give a real-world situation, then ask)',
-    mixed: 'mix of standard MCQs and scenario-based questions (roughly 50/50)',
-  }[options.examType] ?? 'standard multiple-choice questions'
   const topicOnly = cleanText(String(metadata.inputMode ?? '')) === 'topic'
+  const totalCount = fallbackQuiz.questions.length
 
-  const prompt = `You are an expert exam coach. Build an exam-prep quiz from the material below.
-Return ONLY valid JSON — no extra text, no markdown fences, no comments.
-
-{
-  "title": "string",
-  "flashSummary": ["string","string","string"],
-  "questions": [
-    {
-      "question": "string",
-      "options": ["string","string","string","string"],
-      "answerIndex": 0,
-      "explanation": "string (2 sentences max, clear and direct)",
-      "difficulty": "easy"|"medium"|"hard",
-      "sourceHint": "string",
-      "sourceExcerpt": "string"
-    }
+  // Attempt 1: full question count
+  // Attempt 2 (if needed): half count, simpler prompt, shorter input
+  const attempts = [
+    { count: totalCount, inputLimit: Math.min(Math.max(totalCount * 300, 5500), 14000) },
+    { count: Math.max(Math.ceil(totalCount / 2), 5), inputLimit: 5000 },
   ]
-}
 
-Rules:
-- Generate EXACTLY ${count} questions. Do not stop early.
-- Question style: ${examTypeLabel}.
-- Difficulty: ${options.difficultyMix}.${options.examName ? `\n- Subject/context: ${options.examName}.` : ''}
-- Questions must test understanding of real concepts, not word definitions.
-- Each question must have exactly 4 options. Distractors must be plausible — not obviously wrong.
-- Correct answer must be factually accurate and directly from the material.
-- Explanations: short (2 sentences), factual, no filler phrases.
-- "sourceExcerpt": copy a short phrase from the material that supports the correct answer.
-- NEVER ask about book/slide title, author, publisher, ISBN, edition, copyright, or course codes.
-- NEVER generate questions whose options are raw slide text or navigation fragments.
-- Do NOT mention slide numbers or page numbers in any question or option.
-- ${topicOnly ? 'Use standard, reliable knowledge for the typed topic.' : 'Base every question on facts from the material. Skip cover pages, TOC, author bios.'}
-- Output the complete JSON with all ${count} questions. Do not truncate.
+  for (let a = 0; a < attempts.length; a++) {
+    const { count, inputLimit } = attempts[a]
+    const maxTokens = Math.min(count * 400 + 900, 16000)
 
-Material:
-${clampText(sourceText, inputLimit)}`
+    // Build a temporary fallback sized for this attempt's count
+    const attemptFallback = { ...fallbackQuiz, questions: fallbackQuiz.questions.slice(0, count) }
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 150000)
-  let completion
-  try {
-    completion = await openai.chat.completions.create(
-      {
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.5,
-        max_tokens: maxTokens,
-        extra_body: { chat_template_kwargs: { thinking: false } },
-      },
-      { signal: controller.signal },
-    )
-  } finally {
-    clearTimeout(timeout)
+    try {
+      const prompt = buildPrompt(sourceText, options, count, inputLimit, topicOnly)
+      const rawText = await callAI(prompt, maxTokens)
+      if (!rawText) { console.error(`[AI] Attempt ${a + 1}: empty response`); continue }
+
+      const parsed = extractJson(rawText) ?? repairJson(rawText)
+      if (!parsed) {
+        console.error(`[AI] Attempt ${a + 1}: JSON parse failed. Preview:`, rawText.slice(0, 300))
+        continue
+      }
+
+      const quiz = normalizeQuiz(parsed, attemptFallback)
+      if (isGoodQuiz(quiz)) {
+        console.log(`[AI] Attempt ${a + 1}: success — ${quiz.questions.length} questions`)
+        return quiz
+      }
+      console.error(`[AI] Attempt ${a + 1}: quality check failed`)
+    } catch (err) {
+      console.error(`[AI] Attempt ${a + 1} error:`, err?.message ?? err)
+    }
+
+    if (a < attempts.length - 1) {
+      console.log(`[AI] Retrying with ${attempts[a + 1].count} questions...`)
+    }
   }
 
-  const rawText = completion.choices[0]?.message?.content?.trim()
-  if (!rawText) return fallbackQuiz
-
-  const parsed = extractJson(rawText)
-  if (!parsed) {
-    console.error('[AI error] Could not extract JSON from response. Raw (first 400 chars):', rawText.slice(0, 400))
-    return fallbackQuiz
-  }
-  return normalizeQuiz(parsed, fallbackQuiz)
+  console.error('[AI] All attempts failed — using local fallback')
+  return fallbackQuiz
 }
 
 function buildLocalChatReply(context, userMessage) {

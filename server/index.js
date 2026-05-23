@@ -421,7 +421,7 @@ Requirements:
 - sourceExcerpt: short phrase copied from the material supporting the answer
 - DO NOT ask about book titles, authors, slide numbers, course codes, or ISBNs
 - DO NOT use raw slide text or navigation labels as answer options
-- ${topicOnly ? 'Use your knowledge of the topic below.' : 'Only use facts from the material below.'}
+- ${topicOnly ? 'Use your knowledge of the topic below.' : 'Only use facts from the material below.'}${options.customPrompt ? `\n- Additional user instructions: ${options.customPrompt}` : ''}
 
 Material:
 ${clampText(sourceText, inputLimit)}`

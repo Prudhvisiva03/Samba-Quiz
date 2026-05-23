@@ -800,49 +800,77 @@ const STUDY_TIPS = [
   'Retrieving info from memory strengthens the memory.',
 ]
 
+function timeEstimate(count: number): string {
+  const secs = count * 3
+  if (secs < 60) return `~${secs}s`
+  return `~${Math.ceil(secs / 60)} min`
+}
+
 function BuildingScreen({ questionCount }: { questionCount: number }) {
   const [stepIdx, setStepIdx] = useState(0)
   const [tipIdx, setTipIdx] = useState(() => Math.floor(Math.random() * STUDY_TIPS.length))
-  const [progress, setProgress] = useState(4)
-  const [flip, setFlip] = useState(false)
+  const [progress, setProgress] = useState(3)
 
   useEffect(() => {
-    const stepId = setInterval(() => {
-      setStepIdx((p) => (p + 1) % BUILD_STEPS.length)
-      setFlip((f) => !f)
-    }, 2400)
-    const tipId = setInterval(() => setTipIdx((p) => (p + 1) % STUDY_TIPS.length), 4500)
-    const progId = setInterval(() => setProgress((p) => Math.min(p + Math.random() * 6 + 1, 91)), 700)
+    const stepId = setInterval(() => setStepIdx((p) => (p + 1) % BUILD_STEPS.length), 2200)
+    const tipId  = setInterval(() => setTipIdx((p) => (p + 1) % STUDY_TIPS.length), 4500)
+    const progId = setInterval(() => setProgress((p) => Math.min(p + Math.random() * 5 + 0.8, 91)), 650)
     return () => { clearInterval(stepId); clearInterval(tipId); clearInterval(progId) }
   }, [])
 
+  const step = BUILD_STEPS[stepIdx]
+
   return (
     <div className="screen building-screen">
+      {/* floating bg particles */}
+      <div className="bld-particles" aria-hidden>
+        {Array.from({ length: 14 }, (_, i) => (
+          <div key={i} className="bld-particle" style={{ '--pi': i } as React.CSSProperties} />
+        ))}
+      </div>
+
       <div className="building-inner">
-        <div className="building-mascot-wrap">
-          <Mascot mood="thinking" />
-          <div className="building-orbit">
-            {BUILD_STEPS.map((s, i) => (
-              <span key={s.icon} className={`building-orbit-dot${i === stepIdx ? ' active' : ''}`} style={{ '--orbit-i': i } as React.CSSProperties}>{s.icon}</span>
+        {/* ── hero step ── */}
+        <div className="bld-hero">
+          <div key={stepIdx} className="bld-step-icon">{step.icon}</div>
+          <p key={`t${stepIdx}`} className="bld-step-text">{step.text}</p>
+          <div className="bld-step-dots">
+            {BUILD_STEPS.map((_, i) => (
+              <span key={i} className={`bld-dot${i === stepIdx ? ' active' : ''}`} />
             ))}
           </div>
         </div>
 
-        <div className={`building-step-row${flip ? ' flip' : ''}`}>
-          <span className="building-step-icon">{BUILD_STEPS[stepIdx].icon}</span>
-          <span className="building-step-text">{BUILD_STEPS[stepIdx].text}</span>
+        {/* ── skeleton question cards ── */}
+        <div className="bld-skeletons">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="bld-skel-card" style={{ '--si': i } as React.CSSProperties}>
+              <div className="bld-skel-q" />
+              <div className="bld-skel-opts">
+                <div className="bld-skel-opt" style={{ '--ow': '72%' } as React.CSSProperties} />
+                <div className="bld-skel-opt" style={{ '--ow': '55%' } as React.CSSProperties} />
+                <div className="bld-skel-opt" style={{ '--ow': '80%' } as React.CSSProperties} />
+                <div className="bld-skel-opt" style={{ '--ow': '63%' } as React.CSSProperties} />
+              </div>
+            </div>
+          ))}
         </div>
 
-        <div className="building-count-badge">{questionCount} questions</div>
-
-        <div className="building-bar-wrap">
-          <div className="building-bar" style={{ width: `${progress}%` }} />
+        {/* ── progress ── */}
+        <div className="bld-progress-wrap">
+          <div className="bld-bar-track">
+            <div className="bld-bar" style={{ width: `${progress}%` }} />
+          </div>
+          <div className="bld-progress-row">
+            <span className="bld-pct">{Math.floor(progress)}%</span>
+            <span className="bld-meta">{questionCount} questions · {timeEstimate(questionCount)}</span>
+          </div>
         </div>
-        <p className="building-bar-label">{Math.floor(progress)}%</p>
 
-        <div className="building-tip-box">
-          <span className="building-tip-label">💡 Study tip</span>
-          <p key={tipIdx} className="building-tip-text">{STUDY_TIPS[tipIdx]}</p>
+        {/* ── tip ── */}
+        <div className="bld-tip-box">
+          <span className="bld-tip-label">💡 Study tip</span>
+          <p key={tipIdx} className="bld-tip-text">{STUDY_TIPS[tipIdx]}</p>
         </div>
       </div>
     </div>
@@ -967,6 +995,7 @@ export default function App() {
   const [idx, setIdx] = useState(0)
   const [dragging, setDragging] = useState(false)
   const [catEat, setCatEat] = useState(0)
+  const [customPrompt, setCustomPrompt] = useState('')
   const quizScreenRef = useRef<HTMLDivElement>(null)
   const resultSavedRef = useRef(false)
 
@@ -1083,7 +1112,7 @@ export default function App() {
         body: JSON.stringify({
           sourceText: studyText,
           metadata: { fileName, mode, inputMode: topicOnly ? 'topic' : fileName ? 'file' : 'notes' },
-          options: { ...form, tone: 'clear and direct' },
+          options: { ...form, tone: 'clear and direct', customPrompt: customPrompt.trim() },
         }),
       })
       const payload = (await response.json()) as QuizPayload & { message?: string }
@@ -1115,6 +1144,7 @@ export default function App() {
     setCustomSubject('')
     setForm(initialForm)
     resultSavedRef.current = false
+    setCustomPrompt('')
     setStep('upload')
   }
 
@@ -1373,6 +1403,19 @@ export default function App() {
                     <option value="scenario">Scenario-based MCQs</option>
                     <option value="mixed">Mixed mode</option>
                   </select>
+                </div>
+                <div className="field field-full">
+                  <label className="field-label" htmlFor="f-custom">
+                    Custom instructions <span className="field-optional">(optional)</span>
+                  </label>
+                  <textarea
+                    id="f-custom"
+                    className="custom-prompt-area"
+                    rows={2}
+                    value={customPrompt}
+                    onChange={(e) => setCustomPrompt(e.target.value)}
+                    placeholder="e.g. Focus only on Chapter 3, ask harder questions about file permissions, avoid basic definitions…"
+                  />
                 </div>
               </div>
             </div>

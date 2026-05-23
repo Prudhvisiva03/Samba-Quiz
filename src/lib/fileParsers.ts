@@ -14,6 +14,19 @@ const cleanupText = (value: string) =>
 
 const supportedImageTypes = new Set(['png', 'jpg', 'jpeg', 'webp'])
 
+function cleanPdfPageText(raw: string): string {
+  return raw
+    // Remove lone page numbers (lines that are just digits)
+    .replace(/(?:^|\n)\s*\d{1,4}\s*(?:\n|$)/g, '\n')
+    // Remove running headers/footers: short all-caps lines (< 60 chars)
+    .replace(/(?:^|\n)([A-Z][A-Z\s\-]{0,58}[A-Z])(?:\n|$)/g, '\n')
+    // Fix broken words: "photo syn thesis" → join if word halves are short
+    .replace(/([a-z]{2,})-\s+([a-z]{2,})/g, '$1$2')
+    // Collapse multiple spaces/newlines
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
 export async function extractPdfText(file: File) {
   const pdfjs = await import('pdfjs-dist')
   const pdfWorker = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
@@ -26,10 +39,21 @@ export async function extractPdfText(file: File) {
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber)
     const content = await page.getTextContent()
-    const text = cleanupText(content.items.map((item) => ('str' in item ? item.str : '')).join(' '))
-    if (text) {
-      pageTexts.push(text)
+    // Group items by their y-position to preserve paragraph structure
+    const lines = new Map<number, string[]>()
+    for (const item of content.items) {
+      if (!('str' in item) || !item.str.trim()) continue
+      const y = Math.round((item as { transform: number[] }).transform[5])
+      if (!lines.has(y)) lines.set(y, [])
+      lines.get(y)!.push(item.str)
     }
+    // Sort lines top→bottom (higher y = higher on page in PDF coords)
+    const sorted = [...lines.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([, parts]) => parts.join(' ').trim())
+      .filter(Boolean)
+    const pageText = cleanPdfPageText(sorted.join(' '))
+    if (pageText.length > 20) pageTexts.push(pageText)
   }
 
   return pageTexts.join('\n\n')
@@ -89,15 +113,28 @@ export async function extractPptxText(file: File) {
   return slideTexts.filter(Boolean).join('\n\n')
 }
 
+function cleanOcrText(raw: string): string {
+  return raw
+    // Fix OCR artifacts: stray single characters on their own line
+    .replace(/(?:^|\n)\s*[a-z]\s*(?:\n|$)/g, '\n')
+    // Fix broken hyphenated words across lines: "photo-\nsynth" → "photosyn"
+    .replace(/([a-z])-\n([a-z])/g, '$1$2')
+    // Merge single newlines (paragraph continuation) but keep double-newlines
+    .replace(/(?<!\n)\n(?!\n)/g, ' ')
+    // Remove non-printable/garbage characters from scanner noise
+    .replace(/[^\x20-\x7E\n]/g, '')
+    // Collapse spaces
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+}
+
 export async function extractImageText(file: File) {
   const { createWorker } = await import('tesseract.js')
   const worker = await createWorker('eng')
 
   try {
-    const {
-      data: { text },
-    } = await worker.recognize(file)
-    return cleanupText(text)
+    const { data } = await worker.recognize(file)
+    return cleanOcrText(data.text)
   } finally {
     await worker.terminate()
   }

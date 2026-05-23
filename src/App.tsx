@@ -339,6 +339,31 @@ export function BikeProgress({
   )
 }
 
+/* ── SIMPLE MARKDOWN RENDERER for chat bubbles ──────────────────────────── */
+function renderMarkdown(text: string): React.ReactNode {
+  // Split on **bold**, *italic*, and `code` spans
+  const segments = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g)
+  const nodes: React.ReactNode[] = []
+  for (let si = 0; si < segments.length; si++) {
+    const seg = segments[si]
+    if (seg.startsWith('**') && seg.endsWith('**') && seg.length > 4) {
+      nodes.push(<strong key={si}>{seg.slice(2, -2)}</strong>)
+    } else if (seg.startsWith('*') && seg.endsWith('*') && seg.length > 2) {
+      nodes.push(<em key={si}>{seg.slice(1, -1)}</em>)
+    } else if (seg.startsWith('`') && seg.endsWith('`') && seg.length > 2) {
+      nodes.push(<code key={si} className="chat-code">{seg.slice(1, -1)}</code>)
+    } else {
+      // Plain text — split on newlines to insert <br>
+      const lines = seg.split('\n')
+      lines.forEach((line, li) => {
+        nodes.push(line)
+        if (li < lines.length - 1) nodes.push(<br key={`${si}-${li}`} />)
+      })
+    }
+  }
+  return nodes
+}
+
 /* ── FLOATING CAT COMPANION ─────────────────────────────────────────────── */
 function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eatTick?: number }) {
   const svgRef = useRef<SVGSVGElement>(null)
@@ -374,7 +399,7 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
   }, [])
 
   useEffect(() => {
-    if (paused) return
+    if (paused || chatOpen) return
     const id = window.setInterval(() => {
       // Stay in left zone (8–38%) or right zone (62–82%) — never the center where buttons live
       const next = Math.random() < 0.5
@@ -386,7 +411,7 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
       setMoving(true)
     }, 4200)
     return () => window.clearInterval(id)
-  }, [paused])
+  }, [paused, chatOpen])
 
   // Clear walking animation once the CSS transition finishes (3.6s)
   useEffect(() => {
@@ -465,7 +490,7 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
             {messages.map((m, i) => (
               <div key={i} className={`companion-bubble companion-bubble--${m.role}`}>
                 {m.role === 'ai' && <span className="companion-avatar">🐱</span>}
-                <span>{m.text}</span>
+                <span>{m.role === 'ai' ? renderMarkdown(m.text) : m.text}</span>
               </div>
             ))}
             {busy && (
@@ -623,27 +648,28 @@ function Confetti() {
 
 /* ── SCORE RING (SVG animated) ───────────────────────────────────────────── */
 function ScoreRing({ pct }: { pct: number }) {
-  const r = 52
+  const r = 48
   const circ = 2 * Math.PI * r
   const [offset, setOffset] = useState(circ)
 
   useEffect(() => {
-    const id = setTimeout(() => setOffset(circ * (1 - pct / 100)), 120)
+    const id = setTimeout(() => setOffset(circ * (1 - pct / 100)), 80)
     return () => clearTimeout(id)
   }, [pct, circ])
 
   const ringColor = pct >= 80 ? '#16a34a' : pct >= 60 ? '#5b5ef4' : '#f59e0b'
+  const trackColor = '#e2e5f0'
 
   return (
     <div className="score-ring-wrap">
-      <svg viewBox="0 0 120 120" className="score-ring-svg">
-        <circle cx="60" cy="60" r={r} fill="none" stroke="var(--border)" strokeWidth="11" />
+      <svg viewBox="0 0 120 120" className="score-ring-svg" style={{ overflow: 'visible' }}>
+        {/* background track — explicit style overrides any cascaded CSS stroke */}
+        <circle cx="60" cy="60" r={r} fill="none" style={{ stroke: trackColor, strokeWidth: 10 }} />
+        {/* filled arc */}
         <circle
           cx="60" cy="60" r={r}
           fill="none"
-          stroke={ringColor}
-          strokeWidth="11"
-          strokeLinecap="round"
+          style={{ stroke: ringColor, strokeWidth: 10, strokeLinecap: 'round' }}
           strokeDasharray={circ}
           strokeDashoffset={offset}
           transform="rotate(-90 60 60)"

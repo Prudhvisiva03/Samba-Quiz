@@ -610,7 +610,6 @@ Rules:
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
       max_tokens: 350,
-      extra_body: { chat_template_kwargs: { thinking: false } },
     })
     response.json({ reply: completion.choices[0]?.message?.content ?? 'No response.' })
   } catch (err) {

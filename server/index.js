@@ -201,14 +201,11 @@ function buildCandidates(safeSentences) {
       continue
     }
 
-    // General: pick a prominent noun phrase as the answer
-    const nouns = sentence.match(/[A-Z][a-z]{3,}/g)
-    if (nouns && nouns.length >= 2) {
-      const noun = nouns[0]
-      const rest = sentence.replace(noun, '').trim()
-      if (rest.length > 20) {
-        candidates.push({ question: `Which of the following correctly describes "${noun}"?`, answer: sentence.slice(0, 90), sentence })
-      }
+    // Last resort: only use sentences that have a clear "X is Y" or "X does Y"
+    // structure but didn't match the stricter patterns above. Skip pure nav text.
+    const hasVerb = /\b(is|are|was|were|can|will|must|should|provides?|enables?|allows?|defines?|means?)\b/i.test(sentence)
+    if (hasVerb && sentence.length > 60) {
+      candidates.push({ question: `Which statement about the material is correct?`, answer: sentence.slice(0, 90), sentence })
     }
   }
   return candidates
@@ -355,6 +352,12 @@ async function generateWithOpenAI(sourceText, options, metadata, fallbackQuiz) {
     return fallbackQuiz
   }
 
+  const count = fallbackQuiz.questions.length
+  // Each question needs ~380 tokens of output; add 800 for title/flashSummary/structure
+  const maxTokens = Math.min(Math.max(count * 380 + 800, 4500), 16000)
+  // Allow more input text for larger question counts so AI has enough material
+  const inputLimit = Math.min(Math.max(count * 300, 5000), 14000)
+
   const examTypeLabel = {
     mcq: 'standard multiple-choice questions',
     scenario: 'scenario-based questions (give a real-world situation, then ask)',
@@ -363,7 +366,7 @@ async function generateWithOpenAI(sourceText, options, metadata, fallbackQuiz) {
   const topicOnly = cleanText(String(metadata.inputMode ?? '')) === 'topic'
 
   const prompt = `You are an expert exam coach. Build an exam-prep quiz from the material below.
-Return ONLY valid JSON — no extra text, no markdown fences.
+Return ONLY valid JSON — no extra text, no markdown fences, no comments.
 
 {
   "title": "string",
@@ -373,7 +376,7 @@ Return ONLY valid JSON — no extra text, no markdown fences.
       "question": "string",
       "options": ["string","string","string","string"],
       "answerIndex": 0,
-      "explanation": "string (max 2 sentences, clear and direct)",
+      "explanation": "string (2 sentences max, clear and direct)",
       "difficulty": "easy"|"medium"|"hard",
       "sourceHint": "string",
       "sourceExcerpt": "string"
@@ -382,32 +385,33 @@ Return ONLY valid JSON — no extra text, no markdown fences.
 }
 
 Rules:
-- Exactly ${fallbackQuiz.questions.length} questions.
+- Generate EXACTLY ${count} questions. Do not stop early.
 - Question style: ${examTypeLabel}.
-- Difficulty: ${options.difficultyMix}.${options.examName ? `\n- Subject/context: ${options.examName} — frame questions appropriately for this subject.` : ''}
-- Distractors must be plausible — not obviously wrong.
-- Explanations: short, direct, no filler.
-- Every question must include "sourceExcerpt" copied from the material.
-- The correct answer must be directly supported by "sourceExcerpt".
-- If support is weak, skip that fact and choose a better-supported one.
-- NEVER ask about the book title, author name, publisher, ISBN, edition number, copyright year, or any front-matter / preface content. These are NOT exam topics.
-- NEVER ask "What is the name of this textbook?" or "Who wrote this book?" type questions.
-- Do NOT reference slide numbers or page numbers in questions.
-- ${topicOnly ? 'Use standard, reliable knowledge for the typed topic below.' : 'Only use facts from the subject-content in the material below — skip any cover page, title page, TOC, or author bio.'}
+- Difficulty: ${options.difficultyMix}.${options.examName ? `\n- Subject/context: ${options.examName}.` : ''}
+- Questions must test understanding of real concepts, not word definitions.
+- Each question must have exactly 4 options. Distractors must be plausible — not obviously wrong.
+- Correct answer must be factually accurate and directly from the material.
+- Explanations: short (2 sentences), factual, no filler phrases.
+- "sourceExcerpt": copy a short phrase from the material that supports the correct answer.
+- NEVER ask about book/slide title, author, publisher, ISBN, edition, copyright, or course codes.
+- NEVER generate questions whose options are raw slide text or navigation fragments.
+- Do NOT mention slide numbers or page numbers in any question or option.
+- ${topicOnly ? 'Use standard, reliable knowledge for the typed topic.' : 'Base every question on facts from the material. Skip cover pages, TOC, author bios.'}
+- Output the complete JSON with all ${count} questions. Do not truncate.
 
 Material:
-${clampText(sourceText)}`
+${clampText(sourceText, inputLimit)}`
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 120000)
+  const timeout = setTimeout(() => controller.abort(), 150000)
   let completion
   try {
     completion = await openai.chat.completions.create(
       {
         model,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.55,
-        max_tokens: 5000,
+        temperature: 0.5,
+        max_tokens: maxTokens,
         extra_body: { chat_template_kwargs: { thinking: false } },
       },
       { signal: controller.signal },

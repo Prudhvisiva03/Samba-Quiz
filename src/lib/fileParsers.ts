@@ -73,6 +73,22 @@ function isNavFragment(text: string): boolean {
   return false
 }
 
+function extractShapeText(shapeXml: string): string {
+  const paragraphs: string[] = []
+  for (const paraMatch of shapeXml.matchAll(/<a:p>([\s\S]*?)<\/a:p>/g)) {
+    const runs = Array.from(paraMatch[1].matchAll(/<a:t>(.*?)<\/a:t>/g))
+      .map((m) => cleanupText(decodeXml(m[1])))
+      .filter(Boolean)
+    if (runs.length === 0) continue
+    const paraText = runs.join(' ')
+    if (isNavFragment(paraText)) continue
+    // Keep paragraphs that are at least 25 chars or end with punctuation (real sentences)
+    if (paraText.length < 25 && !/[.!?:)]$/.test(paraText)) continue
+    paragraphs.push(paraText)
+  }
+  return paragraphs.join(' ')
+}
+
 export async function extractPptxText(file: File) {
   const { default: JSZip } = await import('jszip')
   const zip = await JSZip.loadAsync(await file.arrayBuffer())
@@ -89,24 +105,23 @@ export async function extractPptxText(file: File) {
       const xml = await zip.file(name)?.async('string')
       if (!xml) return ''
 
-      // Extract all paragraph blocks (<a:p>...</a:p>) separately so each
-      // text run stays in its natural paragraph boundary.
-      const paragraphs: string[] = []
-      for (const paraMatch of xml.matchAll(/<a:p>([\s\S]*?)<\/a:p>/g)) {
-        const runs = Array.from(paraMatch[1].matchAll(/<a:t>(.*?)<\/a:t>/g))
-          .map((m) => cleanupText(decodeXml(m[1])))
-          .filter(Boolean)
-        if (runs.length === 0) continue
-        const paraText = runs.join(' ')
-        // Drop navigation / structural fragments
-        if (isNavFragment(paraText)) continue
-        // Drop very short fragments (headers/labels under 20 chars) UNLESS they look like full sentences
-        if (paraText.length < 20 && !/[.!?]$/.test(paraText)) continue
-        paragraphs.push(paraText)
+      const parts: string[] = []
+
+      // Process each shape (<p:sp>) individually so we can skip title placeholders
+      for (const shapeMatch of xml.matchAll(/<p:sp>([\s\S]*?)<\/p:sp>/g)) {
+        const shapeXml = shapeMatch[1]
+
+        // Skip title / centered-title / subtitle placeholder shapes — they are
+        // slide headings, not exam content
+        if (/<p:ph\s[^>]*type="(?:title|ctrTitle|subTitle)"/.test(shapeXml)) continue
+
+        // Skip shapes that are clearly navigation/watermark text boxes
+        // (non-placeholder shapes with no idx that are very short)
+        const text = extractShapeText(shapeXml)
+        if (text) parts.push(text)
       }
 
-      if (paragraphs.length === 0) return ''
-      return paragraphs.join(' ')
+      return parts.join(' ')
     }),
   )
 

@@ -3,7 +3,7 @@ import './App.css'
 import { extractTextFromFile } from './lib/fileParsers'
 import type { Difficulty, QuizPayload, QuizQuestion } from './types'
 
-type Step = 'upload' | 'configure' | 'quiz' | 'celebrate' | 'results'
+type Step = 'upload' | 'configure' | 'quiz' | 'celebrate' | 'results' | 'dashboard'
 type ExamType = 'mcq' | 'scenario' | 'mixed'
 type MascotMood = 'idle' | 'ready' | 'thinking' | 'correct' | 'wrong' | 'celebrate' | 'sad'
 type ChatMessage = { role: 'user' | 'ai'; text: string }
@@ -17,6 +17,55 @@ type QuizForm = {
 }
 
 type AnswerState = Record<string, number>
+
+type QuizResult = {
+  id: string
+  date: string
+  topic: string
+  score: number
+  correct: number
+  total: number
+  difficulty: string
+}
+
+const RESULTS_KEY = 'samba_quiz_results'
+
+function loadResults(): QuizResult[] {
+  try { return JSON.parse(localStorage.getItem(RESULTS_KEY) ?? '[]') } catch { return [] }
+}
+
+function saveResult(r: Omit<QuizResult, 'id' | 'date'>) {
+  const all = loadResults()
+  all.unshift({ ...r, id: Date.now().toString(), date: new Date().toISOString() })
+  localStorage.setItem(RESULTS_KEY, JSON.stringify(all.slice(0, 50)))
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const m = Math.floor(diff / 60000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
+
+function useCountUp(target: number, ms = 900): number {
+  const [val, setVal] = useState(0)
+  useEffect(() => {
+    if (target === 0) { setVal(0); return }
+    setVal(0)
+    const steps = 40
+    let tick = 0
+    const id = setInterval(() => {
+      tick++
+      setVal(Math.round((target * tick) / steps))
+      if (tick >= steps) clearInterval(id)
+    }, ms / steps)
+    return () => clearInterval(id)
+  }, [target, ms])
+  return val
+}
 
 const initialForm: QuizForm = {
   examName: '',
@@ -719,6 +768,119 @@ function CelebrateScreen({ pct, score, userName, onDone }: {
   )
 }
 
+/* ── DASHBOARD ───────────────────────────────────────────────────────────── */
+function StatCard({ icon, value, label, color, suffix = '', delay }: {
+  icon: string; value: number; label: string; color: string; suffix?: string; delay: number
+}) {
+  return (
+    <article className="dash-stat-card" style={{ '--delay': `${delay}ms`, '--card-color': color } as React.CSSProperties}>
+      <span className="dash-stat-icon">{icon}</span>
+      <strong className="dash-stat-value" style={{ color }}>{value}{suffix}</strong>
+      <span className="dash-stat-label">{label}</span>
+    </article>
+  )
+}
+
+function DashboardScreen({ onBack }: { onBack: () => void }) {
+  const results = useMemo(() => loadResults(), [])
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    const id = setTimeout(() => setReady(true), 40)
+    return () => clearTimeout(id)
+  }, [])
+
+  const totalQuizzes = results.length
+  const avgScore = totalQuizzes > 0 ? Math.round(results.reduce((s, r) => s + r.score, 0) / totalQuizzes) : 0
+  const bestScore = totalQuizzes > 0 ? Math.max(...results.map((r) => r.score)) : 0
+  const totalQs   = results.reduce((s, r) => s + r.total, 0)
+
+  const cTotal = useCountUp(totalQuizzes)
+  const cAvg   = useCountUp(avgScore)
+  const cBest  = useCountUp(bestScore)
+  const cQs    = useCountUp(totalQs)
+
+  const topicMap = new Map<string, number[]>()
+  results.forEach((r) => {
+    const key = r.topic || 'Quiz'
+    if (!topicMap.has(key)) topicMap.set(key, [])
+    topicMap.get(key)!.push(r.score)
+  })
+  const topics = [...topicMap.entries()]
+    .map(([topic, scores]) => ({ topic, avg: Math.round(scores.reduce((a, b) => a + b, 0) / scores.length), count: scores.length }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8)
+
+  const scoreColor = (s: number) => s >= 80 ? '#16a34a' : s >= 60 ? '#5b5ef4' : '#f59e0b'
+
+  return (
+    <div className="screen dashboard-screen">
+      <div className="screen-glow screen-glow--one" />
+      <header className="screen-hdr">
+        <button className="ghost-btn dash-back-btn" onClick={onBack}>← Back</button>
+        <div className="brand">My Progress</div>
+        <div style={{ width: 64 }} />
+      </header>
+
+      <main className="screen-body screen-body--wide">
+        {totalQuizzes === 0 ? (
+          <div className={`dash-empty${ready ? ' dash-ready' : ''}`}>
+            <div className="dash-empty-emoji">📊</div>
+            <p className="dash-empty-txt">No quizzes yet! Take your first quiz to see your progress here.</p>
+            <button className="primary-btn" onClick={onBack}>Take a quiz</button>
+          </div>
+        ) : (
+          <>
+            {/* ── stat cards ── */}
+            <div className={`dash-stats-grid${ready ? ' dash-ready' : ''}`}>
+              <StatCard icon="🎯" value={cTotal}  label="Quizzes taken"   color="#5b5ef4"            delay={0}   />
+              <StatCard icon="📈" value={cAvg}    label="Average score"   color={scoreColor(avgScore)} suffix="%" delay={80}  />
+              <StatCard icon="🏆" value={cBest}   label="Best score"      color="#16a34a"             suffix="%" delay={160} />
+              <StatCard icon="❓" value={cQs}     label="Questions done"  color="#0ea5e9"            delay={240} />
+            </div>
+
+            {/* ── topic bars ── */}
+            {topics.length > 0 && (
+              <section className={`surface-card dash-topics-card${ready ? ' dash-ready' : ''}`} style={{ '--delay': '280ms' } as React.CSSProperties}>
+                <p className="section-label">Topic performance</p>
+                <div className="dash-topic-list">
+                  {topics.map((t, i) => (
+                    <div key={t.topic} className="dash-topic-row" style={{ '--delay': `${340 + i * 55}ms` } as React.CSSProperties}>
+                      <span className="dash-topic-name">{t.topic}</span>
+                      <div className="dash-bar-track">
+                        <div className="dash-bar" style={{ '--bar-w': `${t.avg}%`, '--bar-color': scoreColor(t.avg), '--delay': `${440 + i * 55}ms` } as React.CSSProperties} />
+                      </div>
+                      <span className="dash-topic-pct" style={{ color: scoreColor(t.avg) }}>{t.avg}%</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* ── history list ── */}
+            <section className={`surface-card dash-history-card${ready ? ' dash-ready' : ''}`} style={{ '--delay': '360ms' } as React.CSSProperties}>
+              <p className="section-label">Recent quizzes</p>
+              <div className="dash-history-list">
+                {results.slice(0, 20).map((r, i) => (
+                  <div key={r.id} className="dash-hist-row" style={{ '--delay': `${420 + i * 45}ms` } as React.CSSProperties}>
+                    <div className="dash-hist-left">
+                      <span className="dash-hist-topic">{r.topic || 'Quiz'}</span>
+                      <span className="dash-hist-meta">{r.total} Qs · {r.difficulty} · {timeAgo(r.date)}</span>
+                    </div>
+                    <span className="dash-hist-score" style={{ color: scoreColor(r.score), background: `${scoreColor(r.score)}18` }}>
+                      {r.score}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </>
+        )}
+      </main>
+    </div>
+  )
+}
+
 export default function App() {
   const [step, setStep] = useState<Step>('upload')
   const [form, setForm] = useState<QuizForm>(initialForm)
@@ -738,6 +900,7 @@ export default function App() {
   const [dragging, setDragging] = useState(false)
   const [catEat, setCatEat] = useState(0)
   const quizScreenRef = useRef<HTMLDivElement>(null)
+  const resultSavedRef = useRef(false)
 
   const stats = useMemo(() => {
     const words = studyText.trim() ? studyText.trim().split(/\s+/).length : 0
@@ -765,6 +928,20 @@ export default function App() {
   useEffect(() => {
     quizScreenRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
   }, [idx])
+
+  // Save result to localStorage once when reaching results screen
+  useEffect(() => {
+    if (step === 'results' && quiz && !resultSavedRef.current) {
+      resultSavedRef.current = true
+      saveResult({
+        topic: form.examName || quiz.title || 'Quiz',
+        score: pct,
+        correct: score.correct,
+        total: score.total,
+        difficulty: form.difficultyMix,
+      })
+    }
+  }, [step, quiz, pct, score, form])
 
   const mascotMood = useMemo<MascotMood>(() => {
     if (isBuilding) return 'thinking'
@@ -869,7 +1046,12 @@ export default function App() {
     setSelectedSubject('')
     setCustomSubject('')
     setForm(initialForm)
+    resultSavedRef.current = false
     setStep('upload')
+  }
+
+  if (step === 'dashboard') {
+    return <DashboardScreen onBack={() => setStep('upload')} />
   }
 
   if (step === 'upload') {
@@ -881,6 +1063,9 @@ export default function App() {
 
         <header className="screen-hdr">
           <div className="brand">Samba Quiz</div>
+          <button className="dash-open-btn" onClick={() => setStep('dashboard')} title="My Progress">
+            📊 Progress
+          </button>
         </header>
 
         <main className="screen-body screen-body--wide">

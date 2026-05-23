@@ -353,6 +353,19 @@ function buildTopicFallbackQuiz(sourceText, options, metadata) {
   }
 }
 
+function shuffleOptions(opts, answerIndex) {
+  // Fisher-Yates shuffle, tracking where the correct answer lands
+  const arr = opts.map((text, i) => ({ text, correct: i === answerIndex }))
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return {
+    options: arr.map((o) => o.text),
+    answerIndex: arr.findIndex((o) => o.correct),
+  }
+}
+
 function normalizeQuiz(payload, fallbackQuiz) {
   if (!payload || typeof payload !== 'object') return fallbackQuiz
   const rawQs = Array.isArray(payload.questions) ? payload.questions : []
@@ -370,16 +383,18 @@ function normalizeQuiz(payload, fallbackQuiz) {
       if (opts.length < 4) return null   // drop malformed question entirely — never pad with garbage
       const ai = typeof q.answerIndex === 'number' && q.answerIndex >= 0 && q.answerIndex < opts.length
         ? q.answerIndex : 0
+      // Shuffle so correct answer isn't always first
+      const { options: shuffledOpts, answerIndex: shuffledAi } = shuffleOptions(opts, ai)
       return {
         id: `ai-${i + 1}`,
         question: typeof q.question === 'string' && q.question.length > 5 ? q.question : null,
-        options: opts,
-        answerIndex: ai,
+        options: shuffledOpts,
+        answerIndex: shuffledAi,
         explanation: typeof q.explanation === 'string' ? q.explanation : '',
         difficulty: ['easy', 'medium', 'hard'].includes(q.difficulty) ? q.difficulty : diff,
         sourceHint: typeof q.sourceHint === 'string' ? q.sourceHint : '',
         sourceExcerpt:
-          typeof q.sourceExcerpt === 'string' && answerSupportedByExcerpt(opts[ai], q.sourceExcerpt)
+          typeof q.sourceExcerpt === 'string' && answerSupportedByExcerpt(shuffledOpts[shuffledAi], q.sourceExcerpt)
             ? shortenExcerpt(q.sourceExcerpt)
             : '',
       }

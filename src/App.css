@@ -3090,3 +3090,209 @@ textarea {
   from { width: 0; }
   to   { width: var(--bar-w, 0%); }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   COMPACT CONFIGURE
+═══════════════════════════════════════════════════════════════ */
+.material-badge-sm {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.material-badge-sm .badge-count {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Mode chips — compact horizontal pill buttons */
+.mode-chips {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.mode-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.65rem 1.1rem;
+  border-radius: 14px;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.12s;
+  flex: 1;
+  min-width: 130px;
+}
+.mode-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  transform: translateY(-1px);
+}
+.mode-chip strong {
+  font-size: 0.88rem;
+  color: var(--ink);
+}
+.mode-chip span {
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.mode-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.mode-chip.active strong { color: var(--accent); }
+
+/* ═══════════════════════════════════════════════════════════════
+   BUILDING / LOADING SCREEN
+═══════════════════════════════════════════════════════════════ */
+.building-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 30% 20%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 40%),
+    radial-gradient(circle at 70% 80%, color-mix(in srgb, #f59e0b 8%, transparent), transparent 36%),
+    var(--bg);
+}
+
+.building-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.1rem;
+  padding: 2rem 1.5rem;
+  max-width: 380px;
+  width: 100%;
+  animation: fadeUp 0.4s ease;
+}
+
+/* Mascot + orbiting emojis */
+.building-mascot-wrap {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.building-orbit {
+  position: absolute;
+  inset: 0;
+  animation: orbitSpin 8s linear infinite;
+}
+
+.building-orbit-dot {
+  position: absolute;
+  font-size: 1.2rem;
+  line-height: 1;
+  opacity: 0.25;
+  transition: opacity 0.4s, transform 0.4s;
+  /* Place each dot around a 56px radius circle */
+  left: 50%;
+  top: 50%;
+  transform: rotate(calc(var(--orbit-i) * 60deg)) translateY(-56px) translateX(-50%);
+}
+.building-orbit-dot.active {
+  opacity: 1;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 60%, transparent));
+}
+
+@keyframes orbitSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* Step text */
+.building-step-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  animation: buildStepIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.building-step-row.flip {
+  animation: buildStepIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes buildStepIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.building-step-icon { font-size: 1.3rem; }
+.building-step-text {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.building-count-badge {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 999px;
+  padding: 0.25rem 0.85rem;
+}
+
+/* Progress bar */
+.building-bar-wrap {
+  width: 100%;
+  height: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.building-bar {
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--accent), #818cf8);
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.building-bar-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 700;
+  margin-top: -0.4rem;
+}
+
+/* Study tip */
+.building-tip-box {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 16px;
+  padding: 0.9rem 1.1rem;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.building-tip-label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+.building-tip-text {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--ink);
+  line-height: 1.5;
+  animation: buildStepIn 0.4s ease;
+}

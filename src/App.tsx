@@ -781,6 +781,74 @@ function StatCard({ icon, value, label, color, suffix = '', delay }: {
   )
 }
 
+/* ── BUILDING SCREEN ─────────────────────────────────────────────────────── */
+const BUILD_STEPS = [
+  { icon: '🔍', text: 'Analysing your material…' },
+  { icon: '🧠', text: 'Finding key concepts…' },
+  { icon: '✍️', text: 'Crafting smart questions…' },
+  { icon: '🎯', text: 'Adding clever distractors…' },
+  { icon: '💡', text: 'Writing clear explanations…' },
+  { icon: '✨', text: 'Polishing your quiz…' },
+]
+const STUDY_TIPS = [
+  'Testing yourself beats re-reading by 2×.',
+  'Sleep after studying locks in long-term memory.',
+  'Short sessions with breaks beat marathon cramming.',
+  'Mixing topics (interleaving) builds stronger recall.',
+  'Teaching what you learned is the best memory anchor.',
+  'Spaced repetition is the most efficient study method.',
+  'Retrieving info from memory strengthens the memory.',
+]
+
+function BuildingScreen({ questionCount }: { questionCount: number }) {
+  const [stepIdx, setStepIdx] = useState(0)
+  const [tipIdx, setTipIdx] = useState(() => Math.floor(Math.random() * STUDY_TIPS.length))
+  const [progress, setProgress] = useState(4)
+  const [flip, setFlip] = useState(false)
+
+  useEffect(() => {
+    const stepId = setInterval(() => {
+      setStepIdx((p) => (p + 1) % BUILD_STEPS.length)
+      setFlip((f) => !f)
+    }, 2400)
+    const tipId = setInterval(() => setTipIdx((p) => (p + 1) % STUDY_TIPS.length), 4500)
+    const progId = setInterval(() => setProgress((p) => Math.min(p + Math.random() * 6 + 1, 91)), 700)
+    return () => { clearInterval(stepId); clearInterval(tipId); clearInterval(progId) }
+  }, [])
+
+  return (
+    <div className="screen building-screen">
+      <div className="building-inner">
+        <div className="building-mascot-wrap">
+          <Mascot mood="thinking" />
+          <div className="building-orbit">
+            {BUILD_STEPS.map((s, i) => (
+              <span key={s.icon} className={`building-orbit-dot${i === stepIdx ? ' active' : ''}`} style={{ '--orbit-i': i } as React.CSSProperties}>{s.icon}</span>
+            ))}
+          </div>
+        </div>
+
+        <div className={`building-step-row${flip ? ' flip' : ''}`}>
+          <span className="building-step-icon">{BUILD_STEPS[stepIdx].icon}</span>
+          <span className="building-step-text">{BUILD_STEPS[stepIdx].text}</span>
+        </div>
+
+        <div className="building-count-badge">{questionCount} questions</div>
+
+        <div className="building-bar-wrap">
+          <div className="building-bar" style={{ width: `${progress}%` }} />
+        </div>
+        <p className="building-bar-label">{Math.floor(progress)}%</p>
+
+        <div className="building-tip-box">
+          <span className="building-tip-label">💡 Study tip</span>
+          <p key={tipIdx} className="building-tip-text">{STUDY_TIPS[tipIdx]}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DashboardScreen({ onBack }: { onBack: () => void }) {
   const results = useMemo(() => loadResults(), [])
   const [ready, setReady] = useState(false)
@@ -1209,6 +1277,10 @@ export default function App() {
     )
   }
 
+  if (isBuilding) {
+    return <BuildingScreen questionCount={form.questionCount} />
+  }
+
   if (step === 'configure') {
     return (
       <>
@@ -1216,33 +1288,25 @@ export default function App() {
         <div className="screen-glow screen-glow--one" />
 
         <header className="screen-hdr">
-          <button className="ghost-btn" onClick={() => setStep('upload')}>Back</button>
+          <button className="ghost-btn" onClick={() => setStep('upload')}>← Back</button>
           <span className="hdr-title">Quiz Settings</span>
+          <div className="material-badge-sm">
+            📘 <span>{fileName || (topicOnly ? 'Topic' : sourceLabel)}</span>
+            <span className="badge-count">{stats.words}w</span>
+          </div>
         </header>
 
         <main className="screen-body screen-body--wide">
           <section className="surface-card configure-shell">
-            <div className="configure-overview">
-              <div>
-                <p className="section-label">Almost ready</p>
-                <h2 className="configure-heading">{form.examName || 'Your quiz'}</h2>
-                <p className="configure-sub">
-                  Pick a learning mode, set the difficulty, and hit Generate — your quiz will be ready in seconds.
-                </p>
-              </div>
-              <div className="material-badge">
-                📘 {fileName || (topicOnly ? 'Typed topic' : sourceLabel)}
-                <span className="badge-count">{stats.words} words</span>
-              </div>
-            </div>
 
+            {/* Mode chips — compact 3-button row */}
             <div className="config-section">
               <p className="section-label">Learning mode</p>
-              <div className="mode-cards">
+              <div className="mode-chips">
                 {modes.map((item) => (
                   <button
                     key={item.id}
-                    className={`mode-card${mode === item.id ? ' active' : ''}`}
+                    className={`mode-chip${mode === item.id ? ' active' : ''}`}
                     onClick={() => setMode(item.id)}
                   >
                     <strong>{item.title}</strong>
@@ -1252,6 +1316,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* Settings grid */}
             <div className="config-section">
               <p className="section-label">Settings</p>
               <div className="config-grid">
@@ -1274,42 +1339,28 @@ export default function App() {
                   >
                     <option value="">Select exam type</option>
                     {examTypeOptions.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
+                      <option key={option.id} value={option.id}>{option.label}</option>
                     ))}
                   </select>
                   {selectedSubject === 'other' && (
                     <input
                       className="custom-subject-input"
                       value={customSubject}
-                      onChange={(e) => {
-                        setCustomSubject(e.target.value)
-                        setField('examName', e.target.value)
-                      }}
+                      onChange={(e) => { setCustomSubject(e.target.value); setField('examName', e.target.value) }}
                       placeholder="Type your exam name..."
                       autoFocus
                     />
                   )}
                 </div>
                 <div className="field">
-                  <label className="field-label" htmlFor="f-count">Number of questions</label>
-                  <input
-                    id="f-count"
-                    type="number"
-                    min={5}
-                    max={50}
-                    value={form.questionCount}
-                    onChange={(event) => setField('questionCount', Number(event.target.value))}
-                  />
+                  <label className="field-label" htmlFor="f-count">Questions (max 50)</label>
+                  <input id="f-count" type="number" min={5} max={50} value={form.questionCount}
+                    onChange={(event) => setField('questionCount', Number(event.target.value))} />
                 </div>
                 <div className="field">
-                  <label className="field-label" htmlFor="f-diff">Difficulty level</label>
-                  <select
-                    id="f-diff"
-                    value={form.difficultyMix}
-                    onChange={(event) => setField('difficultyMix', event.target.value as Difficulty)}
-                  >
+                  <label className="field-label" htmlFor="f-diff">Difficulty</label>
+                  <select id="f-diff" value={form.difficultyMix}
+                    onChange={(event) => setField('difficultyMix', event.target.value as Difficulty)}>
                     <option value="easy">Easy</option>
                     <option value="medium">Medium</option>
                     <option value="hard">Hard</option>
@@ -1323,46 +1374,14 @@ export default function App() {
                     <option value="mixed">Mixed mode</option>
                   </select>
                 </div>
-                <div className="field field-full">
-                  <label className="field-label" htmlFor="f-goal">Study goal</label>
-                  <input id="f-goal" value={form.learnerGoal} onChange={(event) => setField('learnerGoal', event.target.value)} placeholder="e.g. Quick revision before exam…" />
-                </div>
               </div>
-            </div>
-
-            <div className="config-preview-grid">
-              <article className="config-preview-card">
-                <span className="config-preview-label">Quiz summary</span>
-                <strong>
-                  {form.questionCount} questions · {form.difficultyMix}
-                </strong>
-                <p>
-                  {form.examType === 'mixed' ? 'Mixed MCQ format' : form.examType === 'scenario' ? 'Scenario-based questions' : 'Standard MCQ format'}
-                </p>
-              </article>
-              <article className="config-preview-card">
-                <span className="config-preview-label">Study mode</span>
-                <strong>{mode === 'rapid' ? 'Rapid Review' : mode === 'story' ? 'Story Coach' : 'Exam Pressure'}</strong>
-                <p>{form.learnerGoal || 'No goal set yet.'}</p>
-              </article>
             </div>
 
             {error && <div className="alert alert-error">{error}</div>}
 
-            <button className="primary-btn btn-lg btn-full" disabled={isBuilding} onClick={() => void buildQuiz()}>
-              {isBuilding ? (
-                <span className="loading-dots">
-                  <span className="dot" />
-                  <span className="dot" />
-                  <span className="dot" />
-                  Building...
-                </span>
-              ) : (
-                'Generate quiz'
-              )}
+            <button className="primary-btn btn-lg btn-full" onClick={() => void buildQuiz()}>
+              Generate {form.questionCount} questions →
             </button>
-
-            {isBuilding && <p className="gen-hint">Creating your questions now...</p>}
           </section>
         </main>
       </div>

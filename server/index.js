@@ -155,17 +155,31 @@ function repairJson(rawText) {
   return null
 }
 
+// Detects an option that is a raw sentence fragment rather than a concise MCQ answer
+function isFragmentOption(o) {
+  if (!o || o.length < 5) return false
+  // Ends mid-word: single letter, or a non-punctuated word after a space that looks cut off
+  if (/\s[a-z]{1,2}$/.test(o)) return true
+  // Phrased as a question (options should never be questions)
+  if (/^(where|when|what|why|how|which|who)\b/i.test(o)) return true
+  // Over 65 chars with no terminal punctuation = likely a raw sentence fragment
+  if (o.length > 65 && !/[.!?:)]$/.test(o)) return true
+  return false
+}
+
 // Returns true if AI quiz looks like real questions (not slide-text garbage)
 function isGoodQuiz(quiz) {
   if (!quiz?.questions?.length) return false
   const bad = quiz.questions.filter((q) => {
-    // Bad signal: options that are very long raw-text fragments with no sentence structure
-    const longRaw = q.options?.filter((o) => o.length > 90 && !/[.!?]$/.test(o)).length ?? 0
-    // Bad signal: question text is under 20 chars or is just "Review this concept"
-    const trivialQ = !q.question || q.question.length < 18 || /review this concept/i.test(q.question)
-    return longRaw >= 2 || trivialQ
+    // Bad: generic "which statement is correct" questions — these test nothing
+    const genericQ = !q.question || q.question.length < 18
+      || /which (statement|of the following).*(correct|true|best)/i.test(q.question)
+      || /review this concept/i.test(q.question)
+    // Bad: 2+ options are raw text fragments
+    const fragmentOpts = (q.options ?? []).filter(isFragmentOption).length
+    return genericQ || fragmentOpts >= 2
   }).length
-  return bad < quiz.questions.length * 0.4
+  return bad < quiz.questions.length * 0.35
 }
 
 function splitSentences(sourceText) {
@@ -381,6 +395,8 @@ function normalizeQuiz(payload, fallbackQuiz) {
         ? q.options.map((o) => String(o).slice(0, 200)).slice(0, 4)
         : []
       if (opts.length < 4) return null   // drop malformed question entirely — never pad with garbage
+      // Drop questions whose options are mostly raw sentence fragments
+      if (opts.filter(isFragmentOption).length >= 2) return null
       const ai = typeof q.answerIndex === 'number' && q.answerIndex >= 0 && q.answerIndex < opts.length
         ? q.answerIndex : 0
       // Shuffle so correct answer isn't always first
@@ -429,11 +445,14 @@ Requirements:
 - Exactly ${count} questions total. Write all of them.
 - Style: ${examTypeLabel}
 - Difficulty: ${options.difficultyMix}${options.examName ? ` | Topic: ${options.examName}` : ''}
-- Each question MUST have exactly 4 short, clear answer options (under 60 chars each)
+- Each question tests ONE specific fact, term, or concept — never "Which statement is correct?"
+- Each option MUST be a short, self-contained answer phrase, under 55 characters
+- NEVER copy raw sentence fragments from the material as options — rewrite them as crisp answers
+- NEVER write an option that is phrased as a question (no "Where will...", "What is...", etc.)
 - answerIndex is the index (0-3) of the correct option
-- Distractors must be plausible but wrong
+- Distractors must be plausible but clearly wrong
 - explanation: 1-2 sentences, factual, explains WHY the answer is correct
-- sourceExcerpt: short phrase copied from the material supporting the answer
+- sourceExcerpt: short phrase (under 80 chars) copied from the material supporting the answer
 - DO NOT ask about book titles, authors, slide numbers, course codes, or ISBNs
 - DO NOT use raw slide text or navigation labels as answer options
 - ${topicOnly ? 'Use your knowledge of the topic below.' : 'Only use facts from the material below.'}${options.customPrompt ? `\n- Additional user instructions: ${options.customPrompt}` : ''}

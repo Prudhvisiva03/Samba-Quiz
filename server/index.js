@@ -157,13 +157,32 @@ function repairJson(rawText) {
 
 // Detects an option that is a raw sentence fragment rather than a concise MCQ answer
 function isFragmentOption(o) {
-  if (!o || o.length < 5) return false
-  // Ends mid-word: single letter, or a non-punctuated word after a space that looks cut off
+  if (!o || o.length < 3) return false
+  // Ends with a dangling preposition or conjunction — always a cut-off sentence
+  if (/\s(of|on|in|at|to|from|by|for|with|and|or|the|a|an|that|this|these|those|are|is|be|been|its|it)$/i.test(o)) return true
+  // Ends mid-word: trailing 1-2 lone letters
   if (/\s[a-z]{1,2}$/.test(o)) return true
+  // Starts with essay-instruction verbs — these are prompts, not answer choices
+  if (/^(discuss|explain|describe|list|identify|outline|compare|contrast|analyze|evaluate|state|define)\b/i.test(o)) return true
   // Phrased as a question (options should never be questions)
   if (/^(where|when|what|why|how|which|who)\b/i.test(o)) return true
-  // Over 65 chars with no terminal punctuation = likely a raw sentence fragment
-  if (o.length > 65 && !/[.!?:)]$/.test(o)) return true
+  // Over 60 chars with no terminal punctuation = raw sentence fragment
+  if (o.length > 60 && !/[.!?:)]$/.test(o)) return true
+  return false
+}
+
+// Detects a bad question stem
+function isBadQuestion(q) {
+  if (!q || q.length < 15) return true
+  // Too short to be meaningful
+  if (q.length < 20) return true
+  // Generic "which statement" questions
+  if (/which (statement|of the following).*(correct|true|best|applies)/i.test(q)) return true
+  // Questions that are clearly material text dressed up as a question
+  if (/^what are more/i.test(q)) return true
+  if (/review this concept/i.test(q)) return true
+  // Sentence fragments used as questions (ends without "?" or ends in lowercase mid-sentence)
+  if (!/\?$/.test(q) && /[a-z]$/.test(q) && q.split(' ').length < 6) return true
   return false
 }
 
@@ -171,15 +190,11 @@ function isFragmentOption(o) {
 function isGoodQuiz(quiz) {
   if (!quiz?.questions?.length) return false
   const bad = quiz.questions.filter((q) => {
-    // Bad: generic "which statement is correct" questions — these test nothing
-    const genericQ = !q.question || q.question.length < 18
-      || /which (statement|of the following).*(correct|true|best)/i.test(q.question)
-      || /review this concept/i.test(q.question)
-    // Bad: 2+ options are raw text fragments
+    const badQ = isBadQuestion(q.question)
     const fragmentOpts = (q.options ?? []).filter(isFragmentOption).length
-    return genericQ || fragmentOpts >= 2
+    return badQ || fragmentOpts >= 2
   }).length
-  return bad < quiz.questions.length * 0.35
+  return bad < quiz.questions.length * 0.25  // tighter: reject if >25% are bad
 }
 
 function splitSentences(sourceText) {
@@ -403,7 +418,7 @@ function normalizeQuiz(payload, fallbackQuiz) {
       const { options: shuffledOpts, answerIndex: shuffledAi } = shuffleOptions(opts, ai)
       return {
         id: `ai-${i + 1}`,
-        question: typeof q.question === 'string' && q.question.length > 5 ? q.question : null,
+        question: typeof q.question === 'string' && !isBadQuestion(q.question) ? q.question : null,
         options: shuffledOpts,
         answerIndex: shuffledAi,
         explanation: typeof q.explanation === 'string' ? q.explanation : '',
@@ -436,26 +451,28 @@ function buildPrompt(sourceText, options, count, inputLimit, topicOnly) {
     mixed: 'mix of standard MCQs and scenario-based questions',
   }[options.examType] ?? 'multiple-choice questions'
 
-  return `You are an expert exam question writer. Output ONLY valid JSON, nothing else.
+  return `You are an expert exam question writer. Output ONLY valid JSON, no other text.
 
-JSON format:
+JSON format (strict):
 {"title":"string","flashSummary":["tip1","tip2","tip3"],"questions":[{"question":"string","options":["A","B","C","D"],"answerIndex":0,"explanation":"string","difficulty":"medium","sourceHint":"string","sourceExcerpt":"string"}]}
 
-Requirements:
-- Exactly ${count} questions total. Write all of them.
-- Style: ${examTypeLabel}
-- Difficulty: ${options.difficultyMix}${options.examName ? ` | Topic: ${options.examName}` : ''}
-- Each question tests ONE specific fact, term, or concept — never "Which statement is correct?"
-- Each option MUST be a short, self-contained answer phrase, under 55 characters
-- NEVER copy raw sentence fragments from the material as options — rewrite them as crisp answers
-- NEVER write an option that is phrased as a question (no "Where will...", "What is...", etc.)
-- answerIndex is the index (0-3) of the correct option
-- Distractors must be plausible but clearly wrong
-- explanation: 1-2 sentences, factual, explains WHY the answer is correct
-- sourceExcerpt: short phrase (under 80 chars) copied from the material supporting the answer
-- DO NOT ask about book titles, authors, slide numbers, course codes, or ISBNs
-- DO NOT use raw slide text or navigation labels as answer options
-- ${topicOnly ? 'Use your knowledge of the topic below.' : 'Only use facts from the material below.'}${options.customPrompt ? `\n- Additional user instructions: ${options.customPrompt}` : ''}
+RULES — read every rule before writing:
+1. Exactly ${count} questions. Style: ${examTypeLabel}. Difficulty: ${options.difficultyMix}.${options.examName ? ` Topic: ${options.examName}.` : ''}
+2. Every question MUST be a complete, specific sentence ending with "?". It must name the concept, command, term, or scenario being tested.
+3. Every option MUST be a short, standalone fact or term — 3 to 50 characters, NO trailing prepositions (of/in/on/to/from/by/the/a/an/that), NO trailing single letters.
+4. Options must NEVER be copied raw from the material. Distill them into crisp answer phrases.
+5. Options must NEVER be phrased as a question or start with Discuss/Explain/Describe/List/Identify.
+6. answerIndex = index (0–3) of the ONE correct option. Distractors are plausible but wrong.
+7. explanation: 1–2 factual sentences explaining WHY the answer is correct.
+8. sourceExcerpt: ≤80 chars copied verbatim from the material that supports the answer (or "" if none).
+9. NEVER ask about book title, author name, ISBN, publisher, slide number, or course code.
+10. ${topicOnly ? 'Use your own knowledge of the topic.' : 'Base every question on facts from the material below — no invented facts.'}${options.customPrompt ? `\n11. Additional instructions: ${options.customPrompt}` : ''}
+
+BAD example (NEVER do this):
+{"question":"What are more shortcuts?","options":["Discuss the fact that the above steps are the minimum capabilities of","Available","minimum text-editing skill","no GUI installed on the system in question"]}
+
+GOOD example (always do this):
+{"question":"Which command opens a file for editing in vi?","options":["vi filename","nano filename","edit filename","open filename"],"answerIndex":0}
 
 Material:
 ${clampText(sourceText, inputLimit)}`

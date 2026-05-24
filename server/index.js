@@ -11,7 +11,7 @@ const app = express()
 const port = Number.parseInt(process.env.PORT ?? '8787', 10)
 // llama-3.3-70b is fast, reliable at JSON, and doesn't produce thinking blocks.
 // Users can override via OPENAI_MODEL env var.
-const model = process.env.OPENAI_MODEL ?? 'meta/llama-3.3-70b-instruct'
+const model = process.env.OPENAI_MODEL ?? 'meta/llama-3.1-8b-instruct'
 const apiKey = process.env.OPENAI_API_KEY
 const baseURL = process.env.OPENAI_BASE_URL
 const openai = apiKey ? new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }) : null
@@ -481,7 +481,7 @@ Material:
 ${clampText(sourceText, inputLimit)}`
 }
 
-async function callAI(prompt, maxTokens, timeoutMs = 160000) {
+async function callAI(prompt, maxTokens, timeoutMs = 75000) {
   const controller = new AbortController()
   const tid = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -495,50 +495,85 @@ async function callAI(prompt, maxTokens, timeoutMs = 160000) {
   }
 }
 
+// Generate one chunk of questions (up to chunkSize). Returns normalized questions array or [].
+async function generateChunk(sourceText, options, metadata, chunkSize, inputLimit, topicOnly) {
+  const diff = options.difficultyMix ?? 'medium'
+  const maxTokens = Math.min(chunkSize * 380 + 600, 8000)
+  try {
+    const prompt = buildPrompt(sourceText, options, chunkSize, inputLimit, topicOnly)
+    const rawText = await callAI(prompt, maxTokens, 90000)   // 90s per chunk
+    if (!rawText) return []
+    const parsed = extractJson(rawText) ?? repairJson(rawText)
+    if (!parsed) return []
+    const quiz = normalizeQuiz(parsed, chunkSize, diff)
+    return quiz?.questions ?? []
+  } catch (err) {
+    console.error('[chunk error]', err?.message ?? err)
+    return []
+  }
+}
+
 async function generateWithOpenAI(sourceText, options, metadata) {
   if (!openai) throw new Error('AI service is not configured on this server.')
 
   const topicOnly = cleanText(String(metadata.inputMode ?? '')) === 'topic'
   const totalCount = Math.min(Math.max(Number(options.questionCount) || 8, 5), 50)
   const diff = options.difficultyMix ?? 'medium'
+  const inputLimit = Math.min(Math.max(totalCount * 250, 4000), 12000)
 
-  // Both attempts use the full question count — only the input window shrinks on retry
-  const attempts = [
-    { count: totalCount, inputLimit: Math.min(Math.max(totalCount * 300, 5500), 14000) },
-    { count: totalCount, inputLimit: 4500 },
-  ]
-
-  for (let a = 0; a < attempts.length; a++) {
-    const { count, inputLimit } = attempts[a]
-    const maxTokens = Math.min(count * 400 + 900, 16000)
-
-    try {
-      const prompt = buildPrompt(sourceText, options, count, inputLimit, topicOnly)
-      const rawText = await callAI(prompt, maxTokens)
-      if (!rawText) { console.error(`[AI] Attempt ${a + 1}: empty response`); continue }
-
-      const parsed = extractJson(rawText) ?? repairJson(rawText)
-      if (!parsed) {
-        console.error(`[AI] Attempt ${a + 1}: JSON parse failed. Preview:`, rawText.slice(0, 300))
-        continue
-      }
-
-      const quiz = normalizeQuiz(parsed, count, diff)
-      if (quiz && isGoodQuiz(quiz)) {
-        console.log(`[AI] Attempt ${a + 1}: success — ${quiz.questions.length} questions`)
-        return quiz
-      }
-      console.error(`[AI] Attempt ${a + 1}: quality check failed`)
-    } catch (err) {
-      console.error(`[AI] Attempt ${a + 1} error:`, err?.message ?? err)
-    }
-
-    if (a < attempts.length - 1) {
-      console.log(`[AI] Retrying attempt ${a + 2}...`)
-    }
+  // Split into chunks of 10 and fire in parallel — 30 questions = 3 simultaneous calls
+  const CHUNK = 10
+  const chunks = []
+  for (let i = 0; i < totalCount; i += CHUNK) {
+    chunks.push(Math.min(CHUNK, totalCount - i))
   }
 
-  throw new Error('Quiz generation failed after all retries. Please try again.')
+  console.log(`[AI] Generating ${totalCount} questions in ${chunks.length} parallel chunk(s) of ${CHUNK}`)
+  const startMs = Date.now()
+
+  const chunkResults = await Promise.all(
+    chunks.map(size => generateChunk(sourceText, options, metadata, size, inputLimit, topicOnly))
+  )
+
+  // Flatten, re-id, deduplicate by question text
+  let allQuestions = chunkResults.flat()
+  const seen = new Set()
+  allQuestions = allQuestions
+    .filter(q => { const key = q.question.toLowerCase().slice(0, 60); if (seen.has(key)) return false; seen.add(key); return true })
+    .slice(0, totalCount)
+    .map((q, i) => ({ ...q, id: `ai-${i + 1}` }))
+
+  console.log(`[AI] Got ${allQuestions.length}/${totalCount} questions in ${Date.now() - startMs}ms`)
+
+  if (allQuestions.length >= Math.ceil(totalCount * 0.6)) {
+    // Have at least 60% of requested count — good enough, return it
+    const quiz = {
+      title: options.examName ? `${options.examName} Quiz` : 'Quiz',
+      flashSummary: [],
+      questions: allQuestions,
+      sourceType: 'AI generated',
+    }
+    if (isGoodQuiz(quiz)) return quiz
+  }
+
+  // Fallback: single attempt with shorter input if chunks failed badly
+  console.log('[AI] Chunks insufficient, trying single full-count attempt...')
+  const maxTokens = Math.min(totalCount * 380 + 800, 12000)
+  try {
+    const prompt = buildPrompt(sourceText, options, totalCount, 4000, topicOnly)
+    const rawText = await callAI(prompt, maxTokens, 90000)
+    if (rawText) {
+      const parsed = extractJson(rawText) ?? repairJson(rawText)
+      if (parsed) {
+        const quiz = normalizeQuiz(parsed, totalCount, diff)
+        if (quiz && isGoodQuiz(quiz)) return quiz
+      }
+    }
+  } catch (err) {
+    console.error('[AI] Single attempt error:', err?.message ?? err)
+  }
+
+  throw new Error('Quiz generation failed. Please try again.')
 }
 
 function buildLocalChatReply(context, userMessage) {

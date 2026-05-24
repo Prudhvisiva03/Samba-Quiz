@@ -541,32 +541,48 @@ async function generateWithOpenAI(sourceText, options, metadata) {
   const diff = options.difficultyMix ?? 'medium'
   const inputLimit = Math.min(Math.max(totalCount * 250, 4000), 12000)
 
-  // Split into chunks of 10 and fire in parallel — 30 questions = 3 simultaneous calls
+  // Ask each chunk for 13 instead of 10 — AI often returns fewer than asked,
+  // so over-requesting gives us headroom to hit the exact total after dedup.
   const CHUNK = 10
+  const CHUNK_ASK = 13  // ask for 30% more than needed per chunk
   const chunks = []
-  for (let i = 0; i < totalCount; i += CHUNK) {
-    chunks.push(Math.min(CHUNK, totalCount - i))
-  }
+  for (let i = 0; i < totalCount; i += CHUNK) chunks.push(CHUNK_ASK)
 
-  console.log(`[AI] Generating ${totalCount} questions in ${chunks.length} parallel chunk(s) of ${CHUNK}`)
+  console.log(`[AI] Generating ${totalCount} questions via ${chunks.length} parallel chunk(s) (asking ${CHUNK_ASK} each)`)
   const startMs = Date.now()
 
-  const chunkResults = await Promise.all(
-    chunks.map(size => generateChunk(sourceText, options, metadata, size, inputLimit, topicOnly))
-  )
+  const dedup = (qs) => {
+    const seen = new Set()
+    return qs.filter(q => {
+      const key = q.question.toLowerCase().slice(0, 60)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }
 
-  // Flatten, re-id, deduplicate by question text
-  let allQuestions = chunkResults.flat()
-  const seen = new Set()
-  allQuestions = allQuestions
-    .filter(q => { const key = q.question.toLowerCase().slice(0, 60); if (seen.has(key)) return false; seen.add(key); return true })
-    .slice(0, totalCount)
-    .map((q, i) => ({ ...q, id: `ai-${i + 1}` }))
+  let allQuestions = dedup(
+    (await Promise.all(chunks.map(size => generateChunk(sourceText, options, metadata, size, inputLimit, topicOnly)))).flat()
+  ).slice(0, totalCount).map((q, i) => ({ ...q, id: `ai-${i + 1}` }))
 
-  console.log(`[AI] Got ${allQuestions.length}/${totalCount} questions in ${Date.now() - startMs}ms`)
+  console.log(`[AI] Round 1: ${allQuestions.length}/${totalCount} in ${Date.now() - startMs}ms`)
 
-  if (allQuestions.length >= Math.ceil(totalCount * 0.6)) {
-    // Have at least 60% of requested count — good enough, return it
+  // Top-up: if still short, fire extra chunks until we hit totalCount (max 2 extra rounds)
+  for (let round = 0; round < 2 && allQuestions.length < totalCount; round++) {
+    const need = totalCount - allQuestions.length
+    console.log(`[AI] Top-up round ${round + 1}: need ${need} more questions`)
+    const extra = await Promise.all(
+      Array.from({ length: Math.ceil(need / CHUNK) }, () =>
+        generateChunk(sourceText, options, metadata, Math.min(CHUNK_ASK, need + 4), inputLimit, topicOnly)
+      )
+    )
+    allQuestions = dedup([...allQuestions, ...extra.flat()])
+      .slice(0, totalCount)
+      .map((q, i) => ({ ...q, id: `ai-${i + 1}` }))
+    console.log(`[AI] After top-up ${round + 1}: ${allQuestions.length}/${totalCount}`)
+  }
+
+  if (allQuestions.length >= Math.ceil(totalCount * 0.85)) {
     const quiz = {
       title: options.examName ? `${options.examName} Quiz` : 'Quiz',
       flashSummary: [],

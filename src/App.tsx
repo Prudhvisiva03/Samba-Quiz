@@ -416,11 +416,7 @@ function renderMarkdown(text: string): React.ReactNode {
 /* ── FLOATING CAT COMPANION ─────────────────────────────────────────────── */
 function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eatTick?: number }) {
   const svgRef = useRef<SVGSVGElement>(null)
-  const posRef = useRef(78)
   const [pupil, setPupil] = useState({ x: 0, y: 0 })
-  const [pos, setPos] = useState(78)
-  const [moving, setMoving] = useState(false)
-  const [facingLeft, setFacingLeft] = useState(false)
   const [paused, setPaused] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [eating, setEating] = useState(false)
@@ -446,28 +442,6 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
     window.addEventListener('mousemove', onMove)
     return () => window.removeEventListener('mousemove', onMove)
   }, [])
-
-  useEffect(() => {
-    if (paused || chatOpen) return
-    const id = window.setInterval(() => {
-      // Stay in left zone (8–38%) or right zone (62–82%) — never the center where buttons live
-      const next = Math.random() < 0.5
-        ? Math.floor(8 + Math.random() * 30)   // left zone
-        : Math.floor(62 + Math.random() * 20)  // right zone
-      setFacingLeft(next < posRef.current)
-      posRef.current = next
-      setPos(next)
-      setMoving(true)
-    }, 4200)
-    return () => window.clearInterval(id)
-  }, [paused, chatOpen])
-
-  // Clear walking animation once the CSS transition finishes (3.6s)
-  useEffect(() => {
-    if (!moving) return
-    const id = window.setTimeout(() => setMoving(false), 3700)
-    return () => window.clearTimeout(id)
-  }, [moving])
 
   useEffect(() => {
     if (!eatTick) return
@@ -509,21 +483,15 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
     }
   }
 
-  // Negate pupil.x when flipped so eyes track cursor correctly through mirror
-  const px = facingLeft ? -pupil.x : pupil.x
+  const px = pupil.x
   const py = pupil.y
 
-  const isWalking = moving && !paused && !eating
-
   function handleCatClick() {
-    setPaused((p) => {
-      if (!p) setMoving(false)
-      return !p
-    })
+    setChatOpen((o) => !o)
   }
 
   return (
-    <div className="companion-root" style={{ '--companion-left': `${pos}%` } as React.CSSProperties}>
+    <div className="companion-root">
       {chatOpen && (
         <div className="companion-panel">
           <div className="companion-panel-hdr">
@@ -567,13 +535,13 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
       {eating && <div className="companion-nom">nom nom! 🐟</div>}
 
       <button
-        className={`companion-cat${eating ? ' companion-cat--eating' : ''}${isWalking ? ' companion-cat--walking' : ''}${paused ? ' companion-cat--paused' : ''}`}
+        className={`companion-cat${eating ? ' companion-cat--eating' : ''}`}
         onClick={handleCatClick}
-        title={paused ? 'Click to walk!' : 'Click to stop!'}
+        title="Chat with quiz buddy"
         aria-label={paused ? 'Resume cat walking' : 'Stop cat'}
       >
         {/* Flip wrapper — mirrors SVG for direction */}
-        <div className={facingLeft ? 'companion-flip companion-flip--left' : 'companion-flip'}>
+        <div className="companion-flip">
           <svg ref={svgRef} viewBox="0 0 80 100" className="companion-svg" xmlns="http://www.w3.org/2000/svg">
             {/* tail — behind body */}
             <g className="companion-tail-grp">
@@ -657,18 +625,8 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
             </g>
           </svg>
         </div>
-        <div className="companion-label">{paused ? 'Zzz...' : 'Tap me!'}</div>
+        <div className="companion-label">Tap me!</div>
       </button>
-
-      {/* Chat badge — after cat so sibling selector works; abs-positioned to cat's shoulder */}
-      {!chatOpen && (
-        <button
-          className={`companion-chat-badge${paused ? ' companion-chat-badge--visible' : ''}`}
-          onClick={(e) => { e.stopPropagation(); setChatOpen(true) }}
-          title="Chat with quiz buddy"
-          aria-label="Open chat"
-        >💬</button>
-      )}
     </div>
   )
 }

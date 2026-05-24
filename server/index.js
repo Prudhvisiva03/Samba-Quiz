@@ -481,11 +481,10 @@ async function generateWithOpenAI(sourceText, options, metadata, fallbackQuiz) {
   const topicOnly = cleanText(String(metadata.inputMode ?? '')) === 'topic'
   const totalCount = fallbackQuiz.questions.length
 
-  // Attempt 1: full question count
-  // Attempt 2 (if needed): half count, simpler prompt, shorter input
+  // Both attempts use the full question count — only the input window shrinks on retry
   const attempts = [
     { count: totalCount, inputLimit: Math.min(Math.max(totalCount * 300, 5500), 14000) },
-    { count: Math.max(Math.ceil(totalCount / 2), 5), inputLimit: 5000 },
+    { count: totalCount, inputLimit: 4500 },
   ]
 
   for (let a = 0; a < attempts.length; a++) {

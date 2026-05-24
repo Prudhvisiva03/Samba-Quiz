@@ -2514,9 +2514,7 @@ textarea {
 .companion-root {
   position: fixed;
   bottom: 3rem;
-  left: clamp(56px, var(--companion-left, 78%), calc(100vw - 56px));
-  transform: translateX(-50%);
-  transition: left 3.6s cubic-bezier(0.45, 0, 0.55, 1);
+  right: 1.5rem;
   z-index: 250;
   display: flex;
   flex-direction: column;
@@ -2589,8 +2587,7 @@ textarea {
 .companion-panel {
   position: absolute;
   bottom: calc(100% + 0.7rem);
-  left: 50%;
-  transform: translateX(-50%);
+  right: 0;
   width: min(calc(100vw - 2rem), 316px);
   max-height: 390px;
   background: var(--surface);
@@ -2605,8 +2602,8 @@ textarea {
 }
 
 @keyframes companionPanelIn {
-  from { opacity: 0; transform: translateX(-50%) translateY(14px) scale(0.92); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  from { opacity: 0; transform: translateY(14px) scale(0.92); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .companion-panel-hdr {

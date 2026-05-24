@@ -306,7 +306,7 @@ function buildFallbackQuiz(sourceText, options, metadata) {
   const pool = candidates.length >= count ? candidates : [...candidates, ...candidates, ...candidates]
 
   const questions = Array.from({ length: count }, (_, index) => {
-    const cand = pool[index % pool.length] ?? { question: 'Review this concept:', answer: keywords[0] ?? 'concept', sentence: safeSentences[0] }
+    const cand = pool[index % pool.length] ?? { question: `What is a key idea in ${options.examName || 'this topic'}?`, answer: keywords[0] ?? 'concept', sentence: safeSentences[0] ?? '' }
 
     // Collect distractor answers from other candidates + keywords
     const otherAnswers = pool
@@ -320,7 +320,10 @@ function buildFallbackQuiz(sourceText, options, metadata) {
       .map((k) => cap(k))
 
     const distractors = [...new Set([...otherAnswers, ...kwFallback])].slice(0, 3)
-    while (distractors.length < 3) distractors.push(`Option ${distractors.length + 1}`)
+    // Use keywords as filler rather than "Option N" placeholders
+    const kwExtra = keywords.filter(k => !distractors.includes(cap(k))).map(cap)
+    let xi = 0
+    while (distractors.length < 3) distractors.push(kwExtra[xi++] ?? keywords[xi] ?? 'Other concept')
 
     const answerIndex = index % 4
     const answer = cap(cand.answer.split(/[,;]/)[0].trim().slice(0, 80))
@@ -493,7 +496,7 @@ async function callAI(prompt, maxTokens, timeoutMs = 160000) {
 }
 
 async function generateWithOpenAI(sourceText, options, metadata, fallbackQuiz) {
-  if (!openai) return fallbackQuiz
+  if (!openai) throw new Error('AI service is not configured on this server.')
 
   const topicOnly = cleanText(String(metadata.inputMode ?? '')) === 'topic'
   const totalCount = fallbackQuiz.questions.length
@@ -537,8 +540,7 @@ async function generateWithOpenAI(sourceText, options, metadata, fallbackQuiz) {
     }
   }
 
-  console.error('[AI] All attempts failed — using local fallback')
-  return fallbackQuiz
+  throw new Error('Quiz generation failed after all retries. Please try again.')
 }
 
 function buildLocalChatReply(context, userMessage) {
@@ -588,11 +590,9 @@ app.post('/api/generate-quiz', async (request, response) => {
     const quiz = await generateWithOpenAI(generationText, options, metadata, fallbackQuiz)
     response.json(quiz)
   } catch (err) {
-    console.error('[AI error]', err?.message ?? err)
-    response.json({
-      ...fallbackQuiz,
-      sourceType: openai ? 'Local fallback after AI error' : fallbackQuiz.sourceType,
-    })
+    const msg = err?.message ?? 'Quiz generation failed.'
+    console.error('[AI error]', msg)
+    response.status(503).json({ message: 'The AI couldn\'t generate clean questions right now. Please try again — it usually works on the second attempt.' })
   }
 })
 

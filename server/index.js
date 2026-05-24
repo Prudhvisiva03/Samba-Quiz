@@ -407,7 +407,7 @@ function normalizeQuiz(payload, fallbackQuiz) {
     .map((q, i) => {
       if (!q || typeof q !== 'object') return null
       const opts = Array.isArray(q.options)
-        ? q.options.map((o) => String(o).slice(0, 200)).slice(0, 4)
+        ? q.options.map((o) => String(o).trim().slice(0, 200)).slice(0, 4)
         : []
       if (opts.length < 4) return null   // drop malformed question entirely — never pad with garbage
       // Drop questions whose options are mostly raw sentence fragments

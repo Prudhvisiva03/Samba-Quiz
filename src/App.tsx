@@ -417,7 +417,6 @@ function renderMarkdown(text: string): React.ReactNode {
 function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eatTick?: number }) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [pupil, setPupil] = useState({ x: 0, y: 0 })
-  const [paused, setPaused] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [eating, setEating] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -538,7 +537,7 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
         className={`companion-cat${eating ? ' companion-cat--eating' : ''}`}
         onClick={handleCatClick}
         title="Chat with quiz buddy"
-        aria-label={paused ? 'Resume cat walking' : 'Stop cat'}
+        aria-label="Chat with quiz buddy"
       >
         {/* Flip wrapper — mirrors SVG for direction */}
         <div className="companion-flip">

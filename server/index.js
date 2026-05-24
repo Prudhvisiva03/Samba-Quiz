@@ -398,30 +398,32 @@ function shuffleOptions(opts, answerIndex) {
   }
 }
 
-function normalizeQuiz(payload, fallbackQuiz) {
-  if (!payload || typeof payload !== 'object') return fallbackQuiz
+// Returns a normalized quiz object on success, or null if the AI output is unusable.
+// Never returns the fallback — caller decides what to do with null.
+function normalizeQuiz(payload, requestedCount, difficulty) {
+  if (!payload || typeof payload !== 'object') return null
   const rawQs = Array.isArray(payload.questions) ? payload.questions : []
-  if (rawQs.length === 0) return fallbackQuiz
+  if (rawQs.length === 0) return null
 
-  const diff = fallbackQuiz.questions[0]?.difficulty ?? 'medium'
+  const diff = difficulty ?? 'medium'
 
   const questions = rawQs
-    .slice(0, fallbackQuiz.questions.length)
+    .slice(0, requestedCount)
     .map((q, i) => {
       if (!q || typeof q !== 'object') return null
       const opts = Array.isArray(q.options)
         ? q.options.map((o) => String(o).trim().slice(0, 200)).slice(0, 4)
         : []
-      if (opts.length < 4) return null   // drop malformed question entirely — never pad with garbage
-      // Drop questions whose options are mostly raw sentence fragments
+      if (opts.length < 4) return null
       if (opts.filter(isFragmentOption).length >= 2) return null
       const ai = typeof q.answerIndex === 'number' && q.answerIndex >= 0 && q.answerIndex < opts.length
         ? q.answerIndex : 0
-      // Shuffle so correct answer isn't always first
       const { options: shuffledOpts, answerIndex: shuffledAi } = shuffleOptions(opts, ai)
+      const questionText = typeof q.question === 'string' && !isBadQuestion(q.question) ? q.question : null
+      if (!questionText) return null
       return {
         id: `ai-${i + 1}`,
-        question: typeof q.question === 'string' && !isBadQuestion(q.question) ? q.question : null,
+        question: questionText,
         options: shuffledOpts,
         answerIndex: shuffledAi,
         explanation: typeof q.explanation === 'string' ? q.explanation : '',
@@ -433,15 +435,13 @@ function normalizeQuiz(payload, fallbackQuiz) {
             : '',
       }
     })
-    .filter((q) => q !== null && q.question !== null)
+    .filter(Boolean)
 
-  if (questions.length === 0) return fallbackQuiz
+  if (questions.length === 0) return null
   return {
-    title: typeof payload.title === 'string' ? payload.title : fallbackQuiz.title,
-    flashSummary:
-      Array.isArray(payload.flashSummary) && payload.flashSummary.length > 0
-        ? payload.flashSummary.map(String).slice(0, 5)
-        : fallbackQuiz.flashSummary,
+    title: typeof payload.title === 'string' ? payload.title : 'Quiz',
+    flashSummary: Array.isArray(payload.flashSummary) && payload.flashSummary.length > 0
+      ? payload.flashSummary.map(String).slice(0, 5) : [],
     questions,
     sourceType: 'AI generated',
   }
@@ -495,11 +495,12 @@ async function callAI(prompt, maxTokens, timeoutMs = 160000) {
   }
 }
 
-async function generateWithOpenAI(sourceText, options, metadata, fallbackQuiz) {
+async function generateWithOpenAI(sourceText, options, metadata) {
   if (!openai) throw new Error('AI service is not configured on this server.')
 
   const topicOnly = cleanText(String(metadata.inputMode ?? '')) === 'topic'
-  const totalCount = fallbackQuiz.questions.length
+  const totalCount = Math.min(Math.max(Number(options.questionCount) || 8, 5), 50)
+  const diff = options.difficultyMix ?? 'medium'
 
   // Both attempts use the full question count — only the input window shrinks on retry
   const attempts = [
@@ -510,9 +511,6 @@ async function generateWithOpenAI(sourceText, options, metadata, fallbackQuiz) {
   for (let a = 0; a < attempts.length; a++) {
     const { count, inputLimit } = attempts[a]
     const maxTokens = Math.min(count * 400 + 900, 16000)
-
-    // Build a temporary fallback sized for this attempt's count
-    const attemptFallback = { ...fallbackQuiz, questions: fallbackQuiz.questions.slice(0, count) }
 
     try {
       const prompt = buildPrompt(sourceText, options, count, inputLimit, topicOnly)
@@ -525,8 +523,8 @@ async function generateWithOpenAI(sourceText, options, metadata, fallbackQuiz) {
         continue
       }
 
-      const quiz = normalizeQuiz(parsed, attemptFallback)
-      if (isGoodQuiz(quiz)) {
+      const quiz = normalizeQuiz(parsed, count, diff)
+      if (quiz && isGoodQuiz(quiz)) {
         console.log(`[AI] Attempt ${a + 1}: success — ${quiz.questions.length} questions`)
         return quiz
       }
@@ -536,7 +534,7 @@ async function generateWithOpenAI(sourceText, options, metadata, fallbackQuiz) {
     }
 
     if (a < attempts.length - 1) {
-      console.log(`[AI] Retrying with ${attempts[a + 1].count} questions...`)
+      console.log(`[AI] Retrying attempt ${a + 2}...`)
     }
   }
 
@@ -572,12 +570,6 @@ app.post('/api/generate-quiz', async (request, response) => {
   const topicOnly = cleanText(String(metadata.inputMode ?? '')) === 'topic'
   const hasEnoughMaterial = sourceText.length >= 120
 
-  // Strip PPTX artifacts + book front-matter (author, ISBN, publisher, copyright, TOC)
-  const cleanedText = stripBookMetadata(stripPptxArtifacts(sourceText))
-  const fallbackQuiz = hasEnoughMaterial
-    ? buildFallbackQuiz(cleanedText, options, metadata)
-    : buildTopicFallbackQuiz(sourceText, options, metadata)
-
   if (!hasEnoughMaterial && !topicOnly) {
     response.status(400).json({
       message: 'Please paste more text, upload a file or image, or type a clear exam topic to continue.',
@@ -585,14 +577,16 @@ app.post('/api/generate-quiz', async (request, response) => {
     return
   }
 
+  // Strip PPTX artifacts + book front-matter before sending to AI
+  const cleanedText = stripBookMetadata(stripPptxArtifacts(sourceText))
+  const generationText = hasEnoughMaterial ? cleanedText : buildTopicSource(sourceText, options, metadata)
+
   try {
-    const generationText = hasEnoughMaterial ? cleanedText : buildTopicSource(sourceText, options, metadata)
-    const quiz = await generateWithOpenAI(generationText, options, metadata, fallbackQuiz)
+    const quiz = await generateWithOpenAI(generationText, options, metadata)
     response.json(quiz)
   } catch (err) {
-    const msg = err?.message ?? 'Quiz generation failed.'
-    console.error('[AI error]', msg)
-    response.status(503).json({ message: 'The AI couldn\'t generate clean questions right now. Please try again — it usually works on the second attempt.' })
+    console.error('[AI error]', err?.message ?? err)
+    response.status(503).json({ message: 'The AI couldn\'t generate questions right now. Please try again in a moment.' })
   }
 })
 

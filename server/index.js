@@ -9,9 +9,10 @@ dotenv.config({ override: true })
 
 const app = express()
 const port = Number.parseInt(process.env.PORT ?? '8787', 10)
-// llama-3.3-70b is fast, reliable at JSON, and doesn't produce thinking blocks.
-// Users can override via OPENAI_MODEL env var.
+// Primary model (set via OPENAI_MODEL env var on Render/server).
+// FAST_MODEL is the guaranteed-fast fallback used when the primary times out.
 const model = process.env.OPENAI_MODEL ?? 'meta/llama-3.1-8b-instruct'
+const FAST_MODEL = 'meta/llama-3.1-8b-instruct'
 const apiKey = process.env.OPENAI_API_KEY
 const baseURL = process.env.OPENAI_BASE_URL
 const openai = apiKey ? new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }) : null
@@ -481,12 +482,12 @@ Material:
 ${clampText(sourceText, inputLimit)}`
 }
 
-async function callAI(prompt, maxTokens, timeoutMs = 75000) {
+async function callAI(prompt, maxTokens, timeoutMs = 75000, useModel = model) {
   const controller = new AbortController()
   const tid = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const completion = await openai.chat.completions.create(
-      { model, messages: [{ role: 'user', content: prompt }], temperature: 0.45, max_tokens: maxTokens },
+      { model: useModel, messages: [{ role: 'user', content: prompt }], temperature: 0.45, max_tokens: maxTokens },
       { signal: controller.signal },
     )
     return completion.choices[0]?.message?.content?.trim() ?? ''
@@ -495,22 +496,41 @@ async function callAI(prompt, maxTokens, timeoutMs = 75000) {
   }
 }
 
-// Generate one chunk of questions (up to chunkSize). Returns normalized questions array or [].
+// Generate one chunk of questions. Tries primary model first (30s), then fast model (60s).
 async function generateChunk(sourceText, options, metadata, chunkSize, inputLimit, topicOnly) {
   const diff = options.difficultyMix ?? 'medium'
   const maxTokens = Math.min(chunkSize * 380 + 600, 8000)
+  const prompt = buildPrompt(sourceText, options, chunkSize, inputLimit, topicOnly)
+
+  // Try primary model with short timeout first
   try {
-    const prompt = buildPrompt(sourceText, options, chunkSize, inputLimit, topicOnly)
-    const rawText = await callAI(prompt, maxTokens, 90000)   // 90s per chunk
-    if (!rawText) return []
-    const parsed = extractJson(rawText) ?? repairJson(rawText)
-    if (!parsed) return []
-    const quiz = normalizeQuiz(parsed, chunkSize, diff)
-    return quiz?.questions ?? []
-  } catch (err) {
-    console.error('[chunk error]', err?.message ?? err)
-    return []
+    const rawText = await callAI(prompt, maxTokens, 30000, model)
+    if (rawText) {
+      const parsed = extractJson(rawText) ?? repairJson(rawText)
+      if (parsed) {
+        const quiz = normalizeQuiz(parsed, chunkSize, diff)
+        if (quiz?.questions?.length) return quiz.questions
+      }
+    }
+  } catch { /* fall through to fast model */ }
+
+  // Primary timed out or returned garbage — retry with guaranteed-fast model
+  if (model !== FAST_MODEL) {
+    console.log(`[chunk] primary model slow/failed, retrying with ${FAST_MODEL}`)
+    try {
+      const rawText = await callAI(prompt, maxTokens, 60000, FAST_MODEL)
+      if (rawText) {
+        const parsed = extractJson(rawText) ?? repairJson(rawText)
+        if (parsed) {
+          const quiz = normalizeQuiz(parsed, chunkSize, diff)
+          if (quiz?.questions?.length) return quiz.questions
+        }
+      }
+    } catch (err) {
+      console.error('[chunk fast-model error]', err?.message ?? err)
+    }
   }
+  return []
 }
 
 async function generateWithOpenAI(sourceText, options, metadata) {
@@ -561,7 +581,7 @@ async function generateWithOpenAI(sourceText, options, metadata) {
   const maxTokens = Math.min(totalCount * 380 + 800, 12000)
   try {
     const prompt = buildPrompt(sourceText, options, totalCount, 4000, topicOnly)
-    const rawText = await callAI(prompt, maxTokens, 90000)
+    const rawText = await callAI(prompt, maxTokens, 90000, FAST_MODEL)
     if (rawText) {
       const parsed = extractJson(rawText) ?? repairJson(rawText)
       if (parsed) {

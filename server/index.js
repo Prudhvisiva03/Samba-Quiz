@@ -167,8 +167,9 @@ function isFragmentOption(o) {
   if (/^(discuss|explain|describe|list|identify|outline|compare|contrast|analyze|evaluate|state|define)\b/i.test(o)) return true
   // Phrased as a question (options should never be questions)
   if (/^(where|when|what|why|how|which|who)\b/i.test(o)) return true
-  // Over 60 chars with no terminal punctuation = raw sentence fragment
-  if (o.length > 60 && !/[.!?:)]$/.test(o)) return true
+  // Over 120 chars with no terminal punctuation = raw sentence fragment
+  // (relaxed from 60 to allow longer but valid answer options)
+  if (o.length > 120 && !/[.!?:)]$/.test(o)) return true
   return false
 }
 
@@ -177,8 +178,7 @@ function isBadQuestion(q) {
   if (!q || q.length < 15) return true
   // Too short to be meaningful
   if (q.length < 20) return true
-  // Generic "which statement" questions
-  if (/which (statement|of the following).*(correct|true|best|applies)/i.test(q)) return true
+  // NOTE: "which of the following" style questions are VALID for LPU/university exams — do NOT reject them
   // Questions that are clearly material text dressed up as a question
   if (/^what are more/i.test(q)) return true
   if (/review this concept/i.test(q)) return true
@@ -417,8 +417,11 @@ function normalizeQuiz(payload, requestedCount, difficulty) {
         : []
       if (opts.length < 4) return null
       if (opts.filter(isFragmentOption).length >= 2) return null
-      const ai = typeof q.answerIndex === 'number' && q.answerIndex >= 0 && q.answerIndex < opts.length
-        ? q.answerIndex : 0
+      // If answerIndex is invalid, skip this question entirely rather than silently defaulting to 0
+      // (defaulting to 0 was causing wrong answers to appear correct)
+      const rawAi = q.answerIndex
+      if (typeof rawAi !== 'number' || rawAi < 0 || rawAi >= opts.length) return null
+      const ai = rawAi
       const { options: shuffledOpts, answerIndex: shuffledAi } = shuffleOptions(opts, ai)
       const questionText = typeof q.question === 'string' && !isBadQuestion(q.question) ? q.question : null
       if (!questionText) return null
@@ -509,7 +512,9 @@ async function generateChunk(sourceText, options, metadata, chunkSize, inputLimi
       const parsed = extractJson(rawText) ?? repairJson(rawText)
       if (parsed) {
         const quiz = normalizeQuiz(parsed, chunkSize, diff)
-        if (quiz?.questions?.length) return quiz.questions
+        if (quiz?.questions?.length) {
+          return { questions: quiz.questions, flashSummary: quiz.flashSummary || [] }
+        }
       }
     }
   } catch { /* fall through to fast model */ }
@@ -523,14 +528,16 @@ async function generateChunk(sourceText, options, metadata, chunkSize, inputLimi
         const parsed = extractJson(rawText) ?? repairJson(rawText)
         if (parsed) {
           const quiz = normalizeQuiz(parsed, chunkSize, diff)
-          if (quiz?.questions?.length) return quiz.questions
+          if (quiz?.questions?.length) {
+            return { questions: quiz.questions, flashSummary: quiz.flashSummary || [] }
+          }
         }
       }
     } catch (err) {
       console.error('[chunk fast-model error]', err?.message ?? err)
     }
   }
-  return []
+  return { questions: [], flashSummary: [] }
 }
 
 async function generateWithOpenAI(sourceText, options, metadata) {
@@ -541,10 +548,10 @@ async function generateWithOpenAI(sourceText, options, metadata) {
   const diff = options.difficultyMix ?? 'medium'
   const inputLimit = Math.min(Math.max(totalCount * 250, 4000), 12000)
 
-  // Ask each chunk for 13 instead of 10 — AI often returns fewer than asked,
-  // so over-requesting gives us headroom to hit the exact total after dedup.
+  // Ask each chunk for 16 instead of 10 — AI often returns fewer than asked,
+  // so over-requesting by 60% gives us reliable headroom to hit exact totals.
   const CHUNK = 10
-  const CHUNK_ASK = 13  // ask for 30% more than needed per chunk
+  const CHUNK_ASK = 16  // ask for 60% more than needed per chunk
   const chunks = []
   for (let i = 0; i < totalCount; i += CHUNK) chunks.push(CHUNK_ASK)
 
@@ -561,38 +568,87 @@ async function generateWithOpenAI(sourceText, options, metadata) {
     })
   }
 
-  let allQuestions = dedup(
-    (await Promise.all(chunks.map(size => generateChunk(sourceText, options, metadata, size, inputLimit, topicOnly)))).flat()
-  ).slice(0, totalCount).map((q, i) => ({ ...q, id: `ai-${i + 1}` }))
+  const chunkResults = await Promise.all(chunks.map(size => generateChunk(sourceText, options, metadata, size, inputLimit, topicOnly)))
+  const initialQuestions = chunkResults.flatMap(r => r.questions)
+  const flashSummaries = chunkResults.flatMap(r => r.flashSummary)
+
+  const seenSummary = new Set()
+  const cleanFlashSummary = flashSummaries
+    .map(t => cleanText(t))
+    .filter(t => {
+      if (t.length < 3 || t.length > 50) return false
+      const lower = t.toLowerCase()
+      if (seenSummary.has(lower)) return false
+      seenSummary.add(lower)
+      return true
+    })
+
+  let allQuestions = dedup(initialQuestions).slice(0, totalCount).map((q, i) => ({ ...q, id: `ai-${i + 1}` }))
 
   console.log(`[AI] Round 1: ${allQuestions.length}/${totalCount} in ${Date.now() - startMs}ms`)
 
-  // Top-up: if still short, fire extra chunks until we hit totalCount (max 2 extra rounds)
-  for (let round = 0; round < 2 && allQuestions.length < totalCount; round++) {
+  // Top-up: if still short, fire extra chunks until we hit totalCount (max 3 extra rounds)
+  // Threshold raised to 0.99 so we keep trying until we have the full requested count.
+  for (let round = 0; round < 3 && allQuestions.length < Math.ceil(totalCount * 0.99); round++) {
     const need = totalCount - allQuestions.length
-    console.log(`[AI] Top-up round ${round + 1}: need ${need} more questions`)
-    const extra = await Promise.all(
+    const askExtra = Math.min(CHUNK_ASK, need + 6)  // ask for a few more than needed
+    console.log(`[AI] Top-up round ${round + 1}: need ${need} more questions (asking ${askExtra})`)
+    const extraResults = await Promise.all(
       Array.from({ length: Math.ceil(need / CHUNK) }, () =>
-        generateChunk(sourceText, options, metadata, Math.min(CHUNK_ASK, need + 4), inputLimit, topicOnly)
+        generateChunk(sourceText, options, metadata, askExtra, inputLimit, topicOnly)
       )
     )
-    allQuestions = dedup([...allQuestions, ...extra.flat()])
+    const extraQuestions = extraResults.flatMap(r => r.questions)
+    const extraSummaries = extraResults.flatMap(r => r.flashSummary)
+
+    allQuestions = dedup([...allQuestions, ...extraQuestions])
       .slice(0, totalCount)
       .map((q, i) => ({ ...q, id: `ai-${i + 1}` }))
+
+    extraSummaries.forEach(t => {
+      const cleaned = cleanText(t)
+      const lower = cleaned.toLowerCase()
+      if (cleaned.length >= 3 && cleaned.length <= 50 && !seenSummary.has(lower)) {
+        seenSummary.add(lower)
+        cleanFlashSummary.push(cleaned)
+      }
+    })
+
     console.log(`[AI] After top-up ${round + 1}: ${allQuestions.length}/${totalCount}`)
   }
 
-  if (allQuestions.length >= Math.ceil(totalCount * 0.85)) {
-    const quiz = {
-      title: options.examName ? `${options.examName} Quiz` : 'Quiz',
-      flashSummary: [],
-      questions: allQuestions,
-      sourceType: 'AI generated',
-    }
-    if (isGoodQuiz(quiz)) return quiz
+  // If we still have fewer than requested, pad with fallback questions to guarantee exact count
+  if (allQuestions.length < totalCount) {
+    const needed = totalCount - allQuestions.length
+    console.log(`[AI] Padding ${needed} questions from fallback to reach exact count of ${totalCount}`)
+    const fallback = buildFallbackQuiz(sourceText, { ...options, questionCount: needed }, metadata)
+    const paddingQs = fallback.questions
+      .slice(0, needed)
+      .map((q, i) => ({ ...q, id: `ai-${allQuestions.length + i + 1}` }))
+    allQuestions = [...allQuestions, ...paddingQs]
   }
 
-  // Fallback: single attempt with shorter input if chunks failed badly
+  // Fallback to key nouns/terms from source text if AI summary is empty
+  if (cleanFlashSummary.length === 0) {
+    const keywords = collectKeywords(sourceText).slice(0, 5).map(cap)
+    if (keywords.length > 0) {
+      cleanFlashSummary.push(...keywords)
+    }
+  }
+
+  const quiz = {
+    title: options.examName ? `${options.examName} Quiz` : 'Quiz',
+    flashSummary: cleanFlashSummary.slice(0, 8),
+    questions: allQuestions.slice(0, totalCount),
+    sourceType: 'AI generated',
+  }
+
+  if (isGoodQuiz(quiz)) {
+    console.log(`[AI] Final: ${quiz.questions.length}/${totalCount} questions in ${Date.now() - startMs}ms`)
+    return quiz
+  }
+
+  // Last resort: single attempt with shorter input
   console.log('[AI] Chunks insufficient, trying single full-count attempt...')
   const maxTokens = Math.min(totalCount * 380 + 800, 12000)
   try {
@@ -601,13 +657,23 @@ async function generateWithOpenAI(sourceText, options, metadata) {
     if (rawText) {
       const parsed = extractJson(rawText) ?? repairJson(rawText)
       if (parsed) {
-        const quiz = normalizeQuiz(parsed, totalCount, diff)
-        if (quiz && isGoodQuiz(quiz)) return quiz
+        const singleQuiz = normalizeQuiz(parsed, totalCount, diff)
+        if (singleQuiz && isGoodQuiz(singleQuiz)) {
+          // Add default flashSummary tags
+          if (!singleQuiz.flashSummary || singleQuiz.flashSummary.length === 0) {
+            const keywords = collectKeywords(sourceText).slice(0, 5).map(cap)
+            singleQuiz.flashSummary = keywords
+          }
+          return singleQuiz
+        }
       }
     }
   } catch (err) {
     console.error('[AI] Single attempt error:', err?.message ?? err)
   }
+
+  // Absolute last resort: return whatever we have (even if quality is lower)
+  if (allQuestions.length > 0) return quiz
 
   throw new Error('Quiz generation failed. Please try again.')
 }

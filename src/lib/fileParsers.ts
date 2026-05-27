@@ -82,8 +82,9 @@ function extractShapeText(shapeXml: string): string {
     if (runs.length === 0) continue
     const paraText = runs.join(' ')
     if (isNavFragment(paraText)) continue
-    // Keep paragraphs that are at least 25 chars or end with punctuation (real sentences)
-    if (paraText.length < 25 && !/[.!?:)]$/.test(paraText)) continue
+    // Keep paragraphs that are at least 15 chars or end with punctuation (real sentences)
+    // (relaxed from 25 to catch short but meaningful bullet points like "RAM stores data temporarily")
+    if (paraText.length < 15 && !/[.!?:)]$/.test(paraText)) continue
     paragraphs.push(paraText)
   }
   return paragraphs.join(' ')
@@ -149,7 +150,18 @@ export async function extractImageText(file: File) {
 
   try {
     const { data } = await worker.recognize(file)
-    return cleanOcrText(data.text)
+    const cleaned = cleanOcrText(data.text)
+    if (!cleaned || cleaned.trim().length < 20) {
+      throw new Error(
+        'Could not read enough text from this image. Try a clearer photo, or paste the text manually below.',
+      )
+    }
+    return cleaned
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Could not read')) throw err
+    throw new Error(
+      'Image text extraction failed. Please make sure the image is clear and well-lit, or paste the notes manually.',
+    )
   } finally {
     await worker.terminate()
   }

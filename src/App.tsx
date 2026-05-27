@@ -76,6 +76,7 @@ const initialForm: QuizForm = {
 }
 
 const examTypeOptions = [
+  { id: 'lpu', label: 'LPU University Exam' },
   { id: 'university', label: 'University Exam' },
   { id: 'government', label: 'Government Exam' },
   { id: 'school', label: 'School Exam' },
@@ -416,6 +417,7 @@ function renderMarkdown(text: string): React.ReactNode {
 /* ── FLOATING CAT COMPANION ─────────────────────────────────────────────── */
 function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eatTick?: number }) {
   const svgRef = useRef<SVGSVGElement>(null)
+  const streak = Number(localStorage.getItem('samba_study_streak') ?? '0')
   const [pupil, setPupil] = useState({ x: 0, y: 0 })
   const [chatOpen, setChatOpen] = useState(false)
   const [eating, setEating] = useState(false)
@@ -456,11 +458,11 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  async function sendMessage() {
-    const msg = input.trim()
+  async function sendMessage(overrideMsg?: string) {
+    const msg = (overrideMsg || input).trim()
     if (!msg || busy) return
     setMessages((prev) => [...prev, { role: 'user', text: msg }])
-    setInput('')
+    if (!overrideMsg) setInput('')
     setBusy(true)
     try {
       const res = await fetch('/api/chat', {
@@ -501,6 +503,17 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
             <p className="companion-panel-ctx">
               {question.question.length > 72 ? question.question.slice(0, 69) + '…' : question.question}
             </p>
+          )}
+          {question && (
+            <div className="companion-shortcuts">
+              <button
+                className="companion-shortcut-btn"
+                onClick={() => void sendMessage("Please explain this question in very simple, easy-to-understand terms.")}
+                disabled={busy}
+              >
+                💡 Explain question simply
+              </button>
+            </div>
           )}
           <div className="companion-panel-msgs">
             {messages.map((m, i) => (
@@ -552,6 +565,24 @@ function FloatingCompanion({ question, eatTick }: { question?: QuizQuestion; eat
             <polygon points="18,26 21,10 30,23" fill="#fda4af" />
             <polygon points="66,28 60,6 48,25" fill="#f97316" />
             <polygon points="62,26 59,10 50,23" fill="#fda4af" />
+            {/* Dynamic Streak Outfits */}
+            {streak >= 4 ? (
+              /* Golden Crown */
+              <g className="cat-crown">
+                <polygon points="27,15 29,4 35,10 40,2 45,10 51,4 53,15" fill="#eab308" stroke="#ca8a04" strokeWidth="1" />
+                <circle cx="29" cy="4" r="1.2" fill="#ef4444" />
+                <circle cx="40" cy="2" r="1.2" fill="#3b82f6" />
+                <circle cx="51" cy="4" r="1.2" fill="#10b981" />
+              </g>
+            ) : streak >= 2 ? (
+              /* Graduation Cap */
+              <g className="cat-grad-cap">
+                <polygon points="26,12 40,6 54,12 40,18" fill="#1e293b" />
+                <path d="M32,14 L32,18 Q40,21 48,18 L48,14" fill="#0f172a" />
+                <path d="M40,12 L50,15 L50,22" stroke="#eab308" strokeWidth="1" fill="none" />
+              </g>
+            ) : null}
+
             {/* head */}
             <ellipse cx="40" cy="37" rx="23" ry="22" fill="#f97316" />
             {/* tabby M forehead mark */}
@@ -953,8 +984,14 @@ export default function App() {
   const [dragging, setDragging] = useState(false)
   const [catEat, setCatEat] = useState(0)
   const [customPrompt, setCustomPrompt] = useState('')
+  const [imageContext, setImageContext] = useState('')
   const quizScreenRef = useRef<HTMLDivElement>(null)
   const resultSavedRef = useRef(false)
+  const [streak, setStreak] = useState(() => Number(localStorage.getItem('samba_study_streak') ?? '0'))
+  const [speakingId, setSpeakingId] = useState<string | null>(null)
+  const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
+  const [mockMode, setMockMode] = useState(false)
+  const [timeLeft, setTimeLeft] = useState(0)
 
   const stats = useMemo(() => {
     const words = studyText.trim() ? studyText.trim().split(/\s+/).length : 0
@@ -983,19 +1020,69 @@ export default function App() {
     quizScreenRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
   }, [idx])
 
+  function updateStreak(): number {
+    try {
+      const today = new Date().toDateString()
+      const lastDate = localStorage.getItem('samba_last_study_date')
+      let currentStreak = Number(localStorage.getItem('samba_study_streak') ?? '0')
+
+      if (lastDate === today) {
+        return currentStreak
+      }
+
+      if (lastDate) {
+        const yesterday = new Date()
+        yesterday.setDate(yesterday.getDate() - 1)
+        if (lastDate === yesterday.toDateString()) {
+          currentStreak += 1
+        } else {
+          currentStreak = 1
+        }
+      } else {
+        currentStreak = 1
+      }
+
+      localStorage.setItem('samba_last_study_date', today)
+      localStorage.setItem('samba_study_streak', currentStreak.toString())
+      return currentStreak
+    } catch {
+      return 1
+    }
+  }
+
   // Save result to localStorage once when reaching results screen
   useEffect(() => {
     if (step === 'results' && quiz && !resultSavedRef.current) {
       resultSavedRef.current = true
       saveResult({
-        topic: form.examName || quiz.title || 'Quiz',
+        topic: form.examName || fileName || quiz.title || 'Quiz',
         score: pct,
         correct: score.correct,
         total: score.total,
         difficulty: form.difficultyMix,
       })
+      const newStreak = updateStreak()
+      setStreak(newStreak)
     }
-  }, [step, quiz, pct, score, form])
+  }, [step, quiz, pct, score, form, fileName])
+
+  // Timer countdown for Mock Test Mode
+  useEffect(() => {
+    let id: any
+    if (step === 'quiz' && mockMode && timeLeft > 0) {
+      id = setInterval(() => {
+        setTimeLeft((t) => {
+          if (t <= 1) {
+            clearInterval(id)
+            setStep('results') // auto submit when time is up
+            return 0
+          }
+          return t - 1
+        })
+      }, 1000)
+    }
+    return () => clearInterval(id)
+  }, [step, mockMode, timeLeft])
 
   const mascotMood = useMemo<MascotMood>(() => {
     if (isBuilding) return 'thinking'
@@ -1024,6 +1111,7 @@ export default function App() {
   async function processFile(file: File) {
     setParsing(true)
     setError('')
+    setImageContext('')
     try {
       const text = await extractTextFromFile(file)
       if (!text.trim()) throw new Error('This file does not contain enough readable text.')
@@ -1067,7 +1155,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sourceText: studyText,
+          sourceText: imageContext.trim() ? `Context about this material: ${imageContext.trim()}\n\n${studyText}` : studyText,
           metadata: { fileName, mode, inputMode: topicOnly ? 'topic' : fileName ? 'file' : 'notes' },
           options: { ...form, tone: 'clear and direct', customPrompt: customPrompt.trim() },
         }),
@@ -1077,6 +1165,9 @@ export default function App() {
       setQuiz(payload)
       setAnswers({})
       setIdx(0)
+      if (mockMode) {
+        setTimeLeft(form.questionCount * 60)
+      }
       setStep('quiz')
     } catch (value) {
       setError(value instanceof Error ? value.message : 'Something went wrong while generating the quiz.')
@@ -1102,11 +1193,19 @@ export default function App() {
     setForm(initialForm)
     resultSavedRef.current = false
     setCustomPrompt('')
+    setImageContext('')
+    setMockMode(false)
+    setTimeLeft(0)
     setStep('upload')
   }
 
   if (step === 'dashboard') {
-    return <DashboardScreen onBack={() => setStep('upload')} />
+    return (
+      <>
+        <DashboardScreen onBack={() => setStep('upload')} />
+        <FloatingCompanion />
+      </>
+    )
   }
 
   if (step === 'upload') {
@@ -1118,9 +1217,12 @@ export default function App() {
 
         <header className="screen-hdr">
           <div className="brand">Samba Quiz</div>
-          <button className="dash-open-btn" onClick={() => setStep('dashboard')} title="My Progress">
-            📊 Progress
-          </button>
+          <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center' }}>
+            {streak > 0 && <span className="streak-badge-header">🔥 {streak} Day Streak!</span>}
+            <button className="dash-open-btn" onClick={() => setStep('dashboard')} title="My Progress">
+              📊 Progress
+            </button>
+          </div>
         </header>
 
         <main className="screen-body screen-body--wide">
@@ -1188,6 +1290,31 @@ export default function App() {
               <span className="dz-sub">PDF, PPTX, TXT, PNG, JPG, and WEBP supported</span>
               {fileName && <span className="dz-change">Choose another file</span>}
             </label>
+
+            {/* Image context prompt — shown when image is uploaded */}
+            {fileName && /\.(png|jpg|jpeg|webp)$/i.test(fileName) && (
+              <div className="img-context-box">
+                <div className="img-context-header">
+                  <span className="img-context-icon">🖼️</span>
+                  <div>
+                    <strong className="img-context-title">Describe what's in this image</strong>
+                    <p className="img-context-hint">
+                      Tell the AI what topics/units this image covers — this gives you much better questions!
+                    </p>
+                  </div>
+                </div>
+                <textarea
+                  className="img-context-area"
+                  rows={2}
+                  value={imageContext}
+                  onChange={(e) => setImageContext(e.target.value)}
+                  placeholder="e.g. Chapter 3 Operating Systems — 3 units covering CPU scheduling, memory management, and deadlocks"
+                />
+                <p className="img-context-tip">
+                  💡 Example: <em>"Unit 4 Computer Networks — OSI model, TCP/IP, and routing protocols"</em>
+                </p>
+              </div>
+            )}
 
             <div className="or-divider"><span>or paste notes or a topic</span></div>
 
@@ -1374,6 +1501,17 @@ export default function App() {
                     placeholder="e.g. Focus only on Chapter 3, ask harder questions about file permissions, avoid basic definitions…"
                   />
                 </div>
+                <div className="field field-full">
+                  <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', textTransform: 'none', fontSize: '0.86rem', fontWeight: 600 }}>
+                    <input
+                      type="checkbox"
+                      checked={mockMode}
+                      onChange={(e) => setMockMode(e.target.checked)}
+                      style={{ width: 'auto', cursor: 'pointer', margin: 0 }}
+                    />
+                    ⏱️ Mock Test Mode (Practice under strict exam time limit)
+                  </label>
+                </div>
               </div>
             </div>
 
@@ -1405,8 +1543,15 @@ export default function App() {
               <div className="quiz-prog-bar">
                 <div className="quiz-prog-fill" style={{ width: `${progress}%` }} />
               </div>
-              <span className="q-progress-label">Q {idx + 1} of {quiz.questions.length}</span>
+              <span className="q-progress-label">
+                Q {idx + 1} of {quiz.questions.length} {fileName ? ` · 📄 ${fileName}` : ''}
+              </span>
             </div>
+            {mockMode && (
+              <div className={`quiz-timer-chip${timeLeft < 60 ? ' urgent' : ''}`}>
+                ⏱️ {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
+              </div>
+            )}
             <div className="hdr-right">
               {userName && <span className="hdr-name">{userName}</span>}
               <div className="score-chip">
@@ -1446,11 +1591,44 @@ export default function App() {
 
               {isAnswered && (
                 <div className={`explain-panel${chosen === question.answerIndex ? ' correct' : ' wrong'}`}>
-                  <strong>{chosen === question.answerIndex ? '✓ Correct!' : '✗ Not quite.'}</strong>
-                  <p>{question.explanation}</p>
-                  {question.sourceHint && <p className="source-hint">📚 {question.sourceHint}</p>}
+                  <div className="explain-panel-header">
+                    <span className="explain-panel-avatar">🤖</span>
+                    <div style={{ flex: 1, textAlign: 'left' }}>
+                      <strong>{chosen === question.answerIndex ? 'Samba-AI: Correct! Great job!' : 'Samba-AI: Let\'s learn why this happened.'}</strong>
+                      <span className="explain-panel-subtitle">Here is the quick breakdown for you:</span>
+                    </div>
+                    <button
+                      className="audio-speak-btn"
+                      onClick={() => {
+                        if (speakingId === question.id) {
+                          window.speechSynthesis.cancel()
+                          setSpeakingId(null)
+                        } else {
+                          window.speechSynthesis.cancel()
+                          const utter = new SpeechSynthesisUtterance(`Correct answer is ${question.options[question.answerIndex]}. ${question.explanation}`)
+                          utter.rate = 0.95
+                          utter.onend = () => setSpeakingId(null)
+                          setSpeakingId(question.id)
+                          window.speechSynthesis.speak(utter)
+                        }
+                      }}
+                    >
+                      {speakingId === question.id ? '⏹️ Stop' : '🔊 Listen'}
+                    </button>
+                  </div>
+                  <div className="explain-panel-content">
+                    {chosen !== question.answerIndex && (
+                      <p className="explain-wrong-why">
+                        ❌ <strong>Your choice:</strong> "{question.options[chosen]}" is not correct because it is a secondary objective or distractor.
+                      </p>
+                    )}
+                    <p className="explain-correct-why">
+                      ✅ <strong>Correct answer:</strong> "{question.options[question.answerIndex]}". {question.explanation}
+                    </p>
+                  </div>
+                  {question.sourceHint && <p className="source-hint">📚 Source Reference: {question.sourceHint}</p>}
                   {question.sourceExcerpt && isExcerptRelevant(question.explanation, question.sourceExcerpt) && (
-                    <p className="source-proof">From your notes: "{question.sourceExcerpt}"</p>
+                    <p className="source-proof">Direct proof from your notes: "{question.sourceExcerpt}"</p>
                   )}
                 </div>
               )}
@@ -1520,6 +1698,12 @@ export default function App() {
                       : 'Keep practicing!'}
               </h2>
               <p className="results-sub">{score.correct} of {score.total} questions answered correctly.</p>
+              {(fileName || quiz.title) && (
+                <div className="results-material-info">
+                  <span>Material: </span>
+                  <strong>{fileName ? `📄 ${fileName}` : `📝 ${quiz.title}`}</strong>
+                </div>
+              )}
             </div>
 
             <div className="results-stat-grid">
@@ -1543,6 +1727,9 @@ export default function App() {
                   Retry missed questions <span className="wrong-count-badge">{score.total - score.correct}</span>
                 </button>
               )}
+              <button className="secondary-btn btn-lg" onClick={() => setCheatSheetOpen(true)}>
+                📄 Generate Cheat Sheet
+              </button>
               <button className="secondary-btn btn-lg" onClick={() => { setAnswers({}); setIdx(0); setStep('quiz') }}>
                 Try again
               </button>
@@ -1562,7 +1749,29 @@ export default function App() {
                 .filter((item) => answers[item.id] !== item.answerIndex)
                 .map((item, reviewIndex) => (
                   <div key={item.id} className="review-card" style={{ '--delay': `${reviewIndex * 80}ms` } as React.CSSProperties}>
-                    <p className="review-q"><span className="review-num">{reviewIndex + 1}</span>{item.question}</p>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.8rem' }}>
+                      <p className="review-q"><span className="review-num">{reviewIndex + 1}</span>{item.question}</p>
+                      <button
+                        className="audio-speak-btn-sm"
+                        title="Listen to explanation"
+                        style={{ background: 'var(--accent-bg)', border: 'none', borderRadius: '8px', cursor: 'pointer', padding: '0.35rem 0.5rem', fontSize: '0.78rem', color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                        onClick={() => {
+                          if (speakingId === item.id) {
+                            window.speechSynthesis.cancel()
+                            setSpeakingId(null)
+                          } else {
+                            window.speechSynthesis.cancel()
+                            const utter = new SpeechSynthesisUtterance(`Correct answer is ${item.options[item.answerIndex]}. ${item.explanation}`)
+                            utter.rate = 0.95
+                            utter.onend = () => setSpeakingId(null)
+                            setSpeakingId(item.id)
+                            window.speechSynthesis.speak(utter)
+                          }
+                        }}
+                      >
+                        {speakingId === item.id ? '⏹️ Stop' : '🔊 Listen'}
+                      </button>
+                    </div>
                     <div className="review-opts">
                       {item.options.map((option, optionIndex) => (
                         <div
@@ -1606,6 +1815,48 @@ export default function App() {
       </>
     )
   }
+
+  {/* Cheat Sheet Modal overlay */}
+  {cheatSheetOpen && quiz && (
+    <div className="cheat-sheet-modal" style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(10px)', zIndex: 9999, display: 'grid', placeItems: 'center', padding: '1.5rem' }}>
+      <div className="cheat-sheet-content" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '24px', width: '100%', maxWidth: '800px', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 70px rgba(0,0,0,0.15)' }}>
+        <header className="cheat-sheet-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.2rem 1.6rem', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 10 }}>
+          <div style={{ textAlign: 'left' }}>
+            <h2 style={{ margin: 0, fontFamily: 'var(--display)', fontSize: '1.3rem', color: 'var(--ink)' }}>⚡ Last-Minute Cheat Sheet</h2>
+            <span style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>Compiled revision guide from {fileName || 'your notes'}</span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.55rem' }}>
+            <button className="primary-btn" onClick={() => window.print()} style={{ padding: '0.45rem 1rem', fontSize: '0.8rem', borderRadius: '10px' }}>🖨️ Print / Save PDF</button>
+            <button className="secondary-btn" onClick={() => setCheatSheetOpen(false)} style={{ padding: '0.45rem 1rem', fontSize: '0.8rem', borderRadius: '10px' }}>✕ Close</button>
+          </div>
+        </header>
+        <main className="cheat-sheet-body" style={{ padding: '1.6rem', display: 'grid', gap: '1.5rem', textAlign: 'left' }}>
+          {quiz.flashSummary && quiz.flashSummary.length > 0 && (
+            <section className="cs-section">
+              <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--accent)' }}>🔑 Core Concepts Summary</h3>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                {quiz.flashSummary.map((point, i) => (
+                  <span key={i} style={{ padding: '0.42rem 0.8rem', borderRadius: '999px', background: 'var(--accent-bg)', color: 'var(--accent)', fontSize: '0.76rem', fontWeight: 600 }}>✨ {point}</span>
+                ))}
+              </div>
+            </section>
+          )}
+          <section className="cs-section">
+            <h3 style={{ margin: '0 0 0.8rem', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--accent)' }}>📚 Exam Q&A Reference Sheet</h3>
+            <div style={{ display: 'grid', gap: '0.8rem' }}>
+              {quiz.questions.map((q, i) => (
+                <div key={q.id} style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '14px', background: 'var(--surface-2)', display: 'grid', gap: '0.4rem' }}>
+                  <strong style={{ fontSize: '0.88rem', color: 'var(--ink)' }}>Q{i + 1}: {q.question}</strong>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--muted)', lineHeight: 1.5 }}>💡 <strong>Explanation:</strong> {q.explanation}</p>
+                  {q.sourceExcerpt && <blockquote style={{ margin: '0.4rem 0 0', paddingLeft: '0.6rem', borderLeft: '3px solid var(--accent)', fontStyle: 'italic', fontSize: '0.76rem', color: 'var(--subtle)' }}>"{q.sourceExcerpt}"</blockquote>}
+                </div>
+              ))}
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  )}
 
   return null
 }
